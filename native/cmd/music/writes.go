@@ -150,12 +150,7 @@ func (m *model) confirmWrite() {
 	}
 	if kind == "clear-queue" {
 		m.dialog = ""
-		m.cancelPlayback()
-		m.queue.Replace(nil, 0)
-		m.audioState.Position = 0
-		m.audioState.Duration = 0
-		m.saveQueue()
-		m.notify("队列已清空")
+		m.clearQueue()
 		return
 	}
 	if kind == "clear-local-lyrics" {

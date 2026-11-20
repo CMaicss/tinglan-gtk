@@ -105,7 +105,8 @@ func (m *model) attachAccount() {
 		m.queue.Position = saved.Position
 		m.rememberResume(saved.Position)
 	}
-	m.localHistory, _ = m.accountStore.LoadHistory()
+	history, _ := m.accountStore.LoadHistory()
+	m.setLocalHistory(history)
 	// The local canonical library is the only favorites source; the per-account
 	// cache is no longer copied into the visible list.
 	//

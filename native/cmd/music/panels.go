@@ -284,19 +284,10 @@ func (m *model) paintDrawer(c *ui.Canvas, size ui.Size) {
 			m.text(c, t.Title, rect(r.X+10, y+5, r.Width-60, 22), 13, 500, m.ink())
 			m.text(c, t.ArtistText(), rect(r.X+10, y+27, r.Width-60, 18), 11, 400, m.muted())
 			if hit(c, queueRows.At(i), r, "队列曲目 "+t.Title) {
-				m.queue.Select(i)
-				m.playCurrent()
-				m.saveQueue()
+				m.selectQueueTrack(i)
 			}
 			if m.iconButton(c, queueRemove.At(i), rect(r.X+r.Width-36, y+8, 30, 30), icons.X, "移除 "+t.Title, false) {
-				current := m.queue.Remove(i)
-				if current {
-					m.cancelPlayback()
-					if m.queue.Current() != nil {
-						m.playCurrent()
-					}
-				}
-				m.saveQueue()
+				m.removeQueueTrack(i)
 				break
 			}
 		}

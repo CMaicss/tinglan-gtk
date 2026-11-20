@@ -1,9 +1,9 @@
 <p align="center">
   <img src="build/icon.png" width="88" alt="听澜图标">
 </p>
-<h1 align="center">听澜 · Tinglan</h1>
-<p align="center"><strong>把喜欢的歌，留在桌面上。</strong></p>
-<p align="center">基于音源插件架构的原生桌面音乐客户端 · 纯 Go + Viva 构建 · 可扩展 · 数据留存本机</p>
+<h1 align="center">听澜 · Tinglan (GTK)</h1>
+<p align="center"><strong>fork 自 https://github.com/talongao/tinglan </strong></p>
+<p align="center">基于音源插件架构的Linux 桌面音乐客户端 · Go 后端 + GTK4 / libadwaita 界面 · 可扩展 · 数据留存本机</p>
 <p align="center">
   <a href="#核心特性">核心特性</a> ·
   <a href="#功能与架构详解">功能架构</a> ·
@@ -13,21 +13,21 @@
   <a href="#参与贡献-contributing">参与贡献</a>
 </p>
 
-![听澜沉浸歌词：晚风心里吹，原句下方显示粤语音译](docs/assets/tinglan/lyrics-cantonese.png)
+![听澜 GTK 沉浸歌词：封面与歌词分栏](docs/ui-preview/screenshots/lyrics-1140.png)
 
 > **免责声明**：本项目为非官方、实验性开源项目，与各音乐平台无隶属或合作关系。客户端仅播放用户账号已有权益允许的音频流，严格遵守各平台服务条款、会员权益及地域限制，不提供音频下载、离线保存或媒体文件处理功能。完整说明请参阅[免责声明与使用边界](docs/DISCLAIMER.md)。
 
 ## 项目简介
 
-**听澜（Tinglan）** 是一款使用 **Go + [Viva](https://github.com/vivaui/viva)** 编写的原生桌面音乐客户端。它通过模块化的**音源插件**接入流媒体平台——只需登录你自己的平台账号，即可在桌面端直接浏览、搜索与播放音乐，无需借助手机充当播放器。
+**听澜（Tinglan）** 是一款面向 Linux 的桌面音乐客户端，使用 **Go 后端与 [GTK4](https://www.gtk.org/) / [libadwaita](https://apps.gnome.org/Libadwaita/) 界面**。它通过模块化的**音源插件**接入流媒体平台——只需登录你自己的平台账号，即可在桌面端直接浏览、搜索与播放音乐，无需借助手机充当播放器。
 
-从图形界面、音频播放内核到构建工具链，听澜全部由原生 Go 代码实现，彻底摆脱对 Electron 或 Node.js 运行时的依赖，兼顾轻量体验与跨平台可扩展性。
+界面使用 Python / PyGObject，通过标准输入输出上的 JSON 与 Go 后端通信，不开启本地网络端口。播放、音源插件和数据读写沿用 Go 实现；桌面应用不依赖 Electron 或 Node.js。
 
 ## 核心特性
 
-**原生、可扩展、数据留在本机。** 界面、播放内核与构建链全部是 Go，没有 Chromium 与 Node.js 的额外开销；音乐平台以独立进程的音源插件接入，插件写什么语言都行；曲库按「一首歌一行、多来源挂载」存在本地，换平台、换账号、曲目下架都不会丢收藏。
+**原生、可扩展、数据留在本机。** 界面采用 GTK 原生控件；音乐平台以独立进程的音源插件接入，插件写什么语言都行；曲库按「一首歌一行、多来源挂载」存在本地，换平台、换账号、曲目下架都不会丢收藏。
 
-- **听歌**：逐字歌词与双语排版、本地 LRC / TXT、12 款主题、托盘与系统媒体控制。
+- **听歌**：逐字歌词与双语排版、本地 LRC / TXT、跟随系统的外观设置与系统媒体控制。
 - **找歌**：多源搜索页签、收藏与歌单、本机播放历史。
 - **可控**：灰区决策模型默认关闭，关掉不产生任何费用；登录会话与 API Key 加密存在本机，不碰系统钥匙串。
 
@@ -56,9 +56,9 @@
 - **异常自动容错**：流解析或解码失败时自动跳至下一首，同时在播放器上保留显式的重试入口。
 
 <details>
-<summary><strong>看看双语歌词 · 原文与翻译一起读</strong></summary>
+<summary><strong>看看 GTK 歌词页 · 大屏布局</strong></summary>
 
-![听澜双语歌词：俄文原句与中文翻译分行显示](docs/assets/tinglan/lyrics-dark.png)
+![听澜 GTK 沉浸歌词在 1920 × 1080 下的布局](docs/ui-preview/screenshots/lyrics-1920.png)
 
 </details>
 
@@ -76,13 +76,13 @@
 | **多源搜索** | 启用两个及以上音源时，搜索页顶部展示平台切换页签；仅启用一个时自动隐藏以减少多余点击。结果随滚动继续加载，点歌直接加入当前队列而不替换已有队列。 |
 | **播放历史** | 仅记录在本机，不上传、不同步。 |
 
-![我的收藏：一首歌一行，右侧是来源与收藏状态](docs/assets/tinglan/favorites.png)
+![听澜 GTK 收藏列表](docs/ui-preview/screenshots/favorites-1140.png)
 
-| 搜索喜欢的歌 | 找回刚刚听过的 |
+| 搜索 | 播放队列 |
 | --- | --- |
-| ![搜索周杰伦的歌曲，可见搜索范围与来源](docs/assets/tinglan/search.png) | ![听澜本机播放历史](docs/assets/tinglan/history-dark.png) |
+| ![听澜 GTK 搜索空态](docs/ui-preview/screenshots/search-empty-1140.png) | ![听澜 GTK 播放队列](docs/ui-preview/screenshots/queue-1140.png) |
 
-> 注：截图取自本机运行界面；曲目与账号内容为示例，功能以当前版本为准。
+> 注：本页使用 GTK 界面设计稿截图，曲目为示例数据；正式客户端功能以当前版本为准。
 
 ### 4. 决策模型（可选）
 
@@ -100,28 +100,20 @@
 
 ### 5. 外观与字体定制
 
-内置从明亮到深沉的 **12 款预设主题**，让音乐库、悬浮播放器和歌词页保持统一的视觉氛围。字体可直接从本机已安装字体中搜索选择，字号也能按阅读习惯自由调整。
+外观支持 **跟随系统、亮色、暗色**，强调色跟随系统。字体可直接从本机已安装字体中搜索选择，字号也能按阅读习惯自由调整。
 
-![听澜外观设置：主题、字体与字号](docs/assets/tinglan/appearance.png)
+![听澜 GTK 窄窗设置界面](docs/ui-preview/screenshots/settings-400.png)
 
 ## 快速开始
 
 ### 平台支持状态
 
-| 平台 | 架构 | 当前状态 | 内嵌登录窗口依赖 |
-| :--- | :--- | :--- | :--- |
-| **macOS** | Apple Silicon (`darwin-arm64`) | **主要开发与实际使用环境**（本页截图来源） | `WKWebView`（系统内置） |
-| **macOS** | Intel (`darwin-x64`) | CI 自动构建产物 | `WKWebView`（系统内置） |
-| **Windows** | x64 (`windows-x64`) | 安装包与音源包随 Release 发布，**已完成 Windows 实机验收** | `WebView2`（需 Microsoft Edge WebView2 Runtime） |
-| **Linux** | - | 暂不打包 | - |
+这个 GTK fork 仅面向 Linux。GNOME / Wayland 已验证现有华为会话恢复、搜索和播放。Linux x86_64 流水线配置为生成 `.deb`、`.rpm` 和 AppImage，音源包独立提供。
 
-### 安装与使用步骤
+### 启动与音源
 
-1. **下载安装包与音源**：从 [Latest Release](https://github.com/talongao/tinglan/releases/latest) 下载对应系统的安装包，以及你要使用的音源包（例如 `huawei-<版本>-darwin-arm64.zip`、`huawei-<版本>-windows-x64.zip`）。
-2. **添加并启用音源**：打开听澜 →「设置 → 音源 → 添加音源」，选择下载的音源包并确认启用。
-3. **账号登录**：在该音源卡片下点击「登录」，通过宿主内嵌窗口（macOS 使用 `WKWebView`，Windows 使用 `WebView2`）登录自己的账号，无需手动复制回调链接。
-
-> **说明**：当前测试包未包含开发者证书签名或公证，亦非正式发行版。
+- 已有本地测试构建时，从仓库根执行 `./out/native/tinglan`。GTK 界面与资源内嵌在可执行文件里，不用手动运行 Python 脚本。
+- 在「设置 → 音源 → 添加音源」导入 Linux 对应架构的音源包并确认启用。已有有效会话可直接复用；需要重新授权时从音源卡片发起登录，Linux 授权使用 Chromium。
 
 ## 从源码构建
 
@@ -130,27 +122,16 @@
 
 ### 环境依赖
 
-- **Go**：`1.27.3+`
-- **C 编译工具**：当前平台 C 编译工具链（macOS 需安装 `Xcode Command Line Tools`）
+- **构建**：Go `1.27.3+`、Linux C 工具链。
+- **运行**：系统 Python 3、PyGObject、GTK4 和 libadwaita（至少 1.6）。
 
-### 构建与调试命令
-
-以下命令均在 `native/` 目录下执行：
+在 `native/` 下构建：
 
 ```sh
-go run ./cmd/tinglan-tool start     # 启动开发环境客户端
-go run ./cmd/tinglan-tool build     # 构建本机可执行程序
-go run ./cmd/tinglan-tool mac-app   # 构建 macOS 应用 (.app)
-go run ./cmd/tinglan-tool plugins   # 打包当前平台的音源 zip
-go run ./cmd/tinglan-tool ui-check  # 离线界面回归（无头 Viva）
+go build -o ../out/native/tinglan ./cmd/music
 ```
 
-### 分支与发布流程
-
-- **`develop` 分支（日常开发）**：可在 GitHub Actions 中手动选择 `macOS Apple Silicon`、`macOS Intel` 或 `Windows x64` 构建，生成的试用包与音源包保存在 Artifacts 中，不发布 Release。
-- **`main` 分支（正式构建）**：仅接受通过检查的 PR；合并后自动构建三个平台，全部成功才发布到 [Latest Release](https://github.com/talongao/tinglan/releases/latest)，音源包与安装包同步发布并附带独立构建编号标签。
-
-完整平台依赖、打包与测试方式见[原生开发说明](native/README.md)。
+Linux 常规构建不需要临时 Go overlay。GitHub Actions 对 PR 只检查和构建；手动运行上传 Artifacts，不发布；`main` 推送在校验三种格式和音源包后才发布。AppImage 仍需要宿主机的 GTK / Python 运行时。
 
 </details>
 
@@ -175,7 +156,7 @@ go run ./cmd/tinglan-tool ui-check  # 离线界面回归（无头 Viva）
 
 ## 参与贡献 (Contributing)
 
-欢迎带着使用感受来提 [Issue](https://github.com/talongao/tinglan/issues)，也欢迎提交修问题、改进排版与可访问性、补充跨平台验证的 Pull Request。
+欢迎带着使用感受来提 [Issue](https://github.com/talongao/tinglan/issues)，也欢迎提交修问题、改进排版与可访问性、补充 Linux 桌面验证的 Pull Request。
 
 - **贡献第三方音源**：请将插件放在 `plugins/<id>/` 目录下，在 `source.json` 中写清稳定的 `id` 与 `version`，并在插件 README 中说明所需运行时与遵守的平台条款。
 - **问题反馈规范**：提 Issue 时请写清系统版本、复现步骤和预期表现；附带截图请避开个人账号信息。
@@ -187,7 +168,7 @@ go run ./cmd/tinglan-tool ui-check  # 离线界面回归（无头 Viva）
 
 感谢 [LINUX DO](https://linux.do/) 社区。愿这里也能遇到喜欢折腾桌面、认真听歌的朋友。
 
-- 原生界面使用 [Viva](https://github.com/vivaui/viva) 构建
+- 桌面界面使用 [GTK4](https://www.gtk.org/)、[libadwaita](https://apps.gnome.org/Libadwaita/) 和 [PyGObject](https://pygobject.gnome.org/) 构建
 - 界面图标基于 [Lucide](https://lucide.dev/)（ISC）
 - 应用图标的许可与归属保留在 [icon.LICENSE.txt](build/icon.LICENSE.txt)
 

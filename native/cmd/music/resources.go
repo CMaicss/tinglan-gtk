@@ -105,11 +105,16 @@ func (m *model) cover(c *ui.Canvas, raw string, b ui.Rect) bool {
 		}
 		return false
 	}
+	m.requestCover(raw)
+	return false
+}
+
+func (m *model) requestCover(raw string) {
 	if m.coverPending == nil {
 		m.coverPending = make(map[string]bool)
 	}
 	if m.demo || m.coverPending[raw] || len(m.coverPending) >= 2 || time.Now().Before(m.coverRetry[raw]) {
-		return false
+		return
 	}
 	m.coverPending[raw] = true
 	epoch := m.accountEpoch
@@ -181,7 +186,6 @@ func (m *model) cover(c *ui.Canvas, raw string, b ui.Rect) bool {
 		m.mu.Unlock()
 		m.requestUpdate()
 	}()
-	return false
 }
 
 // coverCacheLimit is generous enough to hold a full visible page (rows plus the

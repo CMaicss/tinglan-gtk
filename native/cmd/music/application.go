@@ -20,6 +20,7 @@ type applicationState struct {
 	backgroundCheck bool
 	nativeReady     atomic.Bool
 	updateQueued    atomic.Bool
+	uiWake          atomic.Pointer[func()]
 	quit            func()
 	window          *app.Window
 	reopen          atomic.Bool
@@ -198,6 +199,10 @@ func (m *model) updateMedia() {
 // Playback and pending network results must be drained even when no drawable
 // is available. All model mutation remains on the native main thread.
 func (m *model) requestUpdate() {
+	if wake := m.uiWake.Load(); wake != nil {
+		(*wake)()
+		return
+	}
 	if !m.nativeReady.Load() {
 		m.invalidator.Invalidate()
 		return

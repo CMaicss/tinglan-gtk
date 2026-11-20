@@ -33,6 +33,37 @@ func (s *Store) LoadCover(key string) ([]byte, error) {
 	}
 	return data[64:], nil
 }
+
+// ClearCovers removes only cover cache slots, leaving other profile data intact.
+func (s *Store) ClearCovers() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	dir := filepath.Join(s.dir, "covers")
+	info, err := os.Lstat(dir)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if !info.IsDir() {
+		return errors.New("invalid cover cache directory")
+	}
+	var result error
+	for i := 0; i < 128; i++ {
+		path := filepath.Join(dir, fmt.Sprintf("cover-%02x.cache", i))
+		info, err := os.Lstat(path)
+		if os.IsNotExist(err) {
+			continue
+		}
+		if err == nil && info.Mode().IsRegular() {
+			err = os.Remove(path)
+		}
+		result = errors.Join(result, err)
+	}
+	return result
+}
+
 func (s *Store) SaveCover(key string, data []byte) error {
 	if len(data) > 256*1024 {
 		return errors.New("cover cache too large")

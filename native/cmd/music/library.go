@@ -84,40 +84,41 @@ type desktopState struct {
 
 	// remotePending is the playlist the user clicked in the remote browser;
 	// importing runs only after the confirmation dialog.
-	remotePending     music.Playlist
-	remotePendingOK   bool
-	settingsSelect    string
-	lyricStats        storage.LyricStats
-	selected          int
-	queueOpen         bool
-	transportMenu     string
-	queueScroll       float32
-	lyricsMenuOpen    bool
-	lyricResumeAt     time.Time
-	lyricResumeTimer  *time.Timer
-	lyricDragY        float32
-	lyricDragStart    float32
-	lyricDragging     bool
-	lyricDragged      bool
-	playTimer         *time.Timer
-	background        ui.Bitmap
-	backgroundGlass   ui.Bitmap
-	backgroundSize    ui.Size
-	favoriteOff       map[string]bool
-	favoriteKnown     map[string]bool
-	playlists         []music.Playlist
-	detail            *music.Playlist
-	detailTracks      []music.Track
-	remoteHistory     []music.Track
-	localHistory      []music.Track
-	remoteHistoryOpen bool
-	lyricLines        []lyrics.Line
-	stageOpen         bool
-	audioSampledAt    time.Time
-	lyricOffset       float64
-	lyricTrack        string
-	lyricManual       bool
-	lyricScroll       float32
+	remotePending        music.Playlist
+	remotePendingOK      bool
+	settingsSelect       string
+	lyricStats           storage.LyricStats
+	selected             int
+	queueOpen            bool
+	transportMenu        string
+	queueScroll          float32
+	lyricsMenuOpen       bool
+	lyricResumeAt        time.Time
+	lyricResumeTimer     *time.Timer
+	lyricDragY           float32
+	lyricDragStart       float32
+	lyricDragging        bool
+	lyricDragged         bool
+	playTimer            *time.Timer
+	background           ui.Bitmap
+	backgroundGlass      ui.Bitmap
+	backgroundSize       ui.Size
+	favoriteOff          map[string]bool
+	favoriteKnown        map[string]bool
+	playlists            []music.Playlist
+	detail               *music.Playlist
+	detailTracks         []music.Track
+	remoteHistory        []music.Track
+	localHistory         []music.Track
+	localHistoryRevision uint64
+	remoteHistoryOpen    bool
+	lyricLines           []lyrics.Line
+	stageOpen            bool
+	audioSampledAt       time.Time
+	lyricOffset          float64
+	lyricTrack           string
+	lyricManual          bool
+	lyricScroll          float32
 }
 
 func (m *model) initDesktop() {
@@ -301,7 +302,7 @@ func (m *model) clearLibrary() {
 	m.detail = nil
 	m.detailTracks = nil
 	m.remoteHistory = nil
-	m.localHistory = nil
+	m.setLocalHistory(nil)
 	m.scroll = [5]float32{}
 	m.entityScroll = 0
 	m.detailScroll = 0
@@ -474,9 +475,11 @@ func (m *model) moreSearch() {
 	m.loadSearchPage(ctx, cancel, m.searchGeneration, m.searchQuery, m.searchNext)
 }
 func (m *model) loadSearchPage(ctx context.Context, cancel context.CancelFunc, epoch uint64, query string, start int) {
+	// Capture the selected source on the model thread before dispatch.
+	catalog := m.searchCatalog()
 	go func() {
 		defer cancel()
-		tracks, next, err := m.searchTracks(ctx, query, start)
+		tracks, next, err := searchTracks(ctx, catalog, query, start)
 		m.mu.Lock()
 		if !m.closed {
 			m.results = append(m.results, libraryResult{epoch: epoch, tracks: tracks, search: true, query: query, err: err, searchNext: next, complete: next <= start})
@@ -532,8 +535,25 @@ func (m *model) rememberResume(position float64) {
 	}
 }
 
+func (m *model) setLocalHistory(tracks []music.Track) {
+	m.localHistory = tracks
+	m.localHistoryRevision++
+}
+
+func (m *model) playHistoryTrack(index int) {
+	if index < 0 || index >= len(m.localHistory) {
+		return
+	}
+	m.playFailures = 0
+	m.startTracks(m.localHistory, index)
+}
+
 func (m *model) playListTrack(tracks []music.Track, index int) {
 	if index < 0 || index >= len(tracks) {
+		return
+	}
+	if m.view == 3 && m.entity == nil {
+		m.playHistoryTrack(index)
 		return
 	}
 	m.playFailures = 0
@@ -742,7 +762,7 @@ func (m *model) pollAudio() {
 				break
 			}
 		}
-		m.localHistory = items
+		m.setLocalHistory(items)
 		if m.accountStore != nil {
 			_ = m.accountStore.SaveHistory(items)
 		}

@@ -1,0 +1,14 @@
+/* Shared by the approved GTK preview and the Go/GTK frontend. */
+.row-title { font-weight: 650; }
+.track-list, .track-list > row, .playlist-grid, gridview.playlist-grid > child { background: transparent; }
+.track-list row { border-radius: 8px; }
+.track-list row:hover { background: alpha(currentColor, .07); }
+.track-list row.current { background: alpha(@accent_color, .11); }
+.track-list row.current .row-title { color: @accent_color; }
+.duration { font-variant-numeric: tabular-nums; }
+.playlist-grid .playlist-card { padding: 8px; border-width: 0; border-radius: 12px; background: transparent; }
+.playlist-grid .playlist-card:hover, .playlist-grid .playlist-card:focus-visible,
+gridview.playlist-grid > child:focus-visible .playlist-card { background: alpha(currentColor, .07); }
+.playlist-grid .playlist-card:active { background: alpha(currentColor, .12); }
+.playlist-grid .playlist-meta { font-size: .9em; }
+.playlist-art { border-radius: 12px; background: alpha(currentColor, .06); }

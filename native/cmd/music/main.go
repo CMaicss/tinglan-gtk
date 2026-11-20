@@ -137,7 +137,7 @@ func (m *model) wake() {
 	m.applySessionChecks()
 	m.applyPersistence()
 	m.applyMedia()
-	if m.reopen.Swap(false) && m.window != nil {
+	if m.window != nil && m.reopen.Swap(false) {
 		m.window.Show()
 	}
 	m.applyCovers()
@@ -273,20 +273,43 @@ func (m *model) close() {
 }
 
 func main() {
+	if runtime.GOOS == "linux" && useDesignUI(os.Args[1:], os.Getenv("VIVA_HEADLESS") != "") {
+		if err := launchDesignUI(os.Args[1:]); err != nil {
+			log.Fatalf("启动听澜 GTK 界面失败: %v", err)
+		}
+		return
+	}
 	// Viva drives AppKit, and AppKit must run on the process's original thread:
 	// viva_system_reduce_motion hops to the main queue with dispatch_sync. Pin the
 	// goroutine before any file or network work can hand it to another thread,
 	// otherwise startup deadlocks with no window.
 	runtime.LockOSThread()
-	// Move the pre-rename profile directory on first launch so the local
-	// library, queue and saved session survive the rename.
-	_ = appmeta.MigrateDataDir()
 	backgroundCheck := flag.Bool("check-background", false, "synthetic hidden-window playback check; requires --demo 2 and --fixture-dir")
 	fixture := flag.String("audio-fixture", "", "explicit synthetic local MP3/FLAC fixture (muted)")
 	demo := flag.Int("demo", 0, "explicit offline synthetic library size (1..10000)")
 	fixtureDir := flag.String("fixture-dir", "", "synthetic tone.mp3/tone.flac directory")
-	profile := flag.String("profile", "", "explicit isolated native profile; never reads Electron profile")
+	profile := flag.String("profile", "", "explicit native profile; never reads Electron profile")
+	design := flag.Bool("design-stdio", false, "serve the GTK design frontend over standard I/O")
 	flag.Parse()
+	if *design {
+		m := newModel()
+		if *demo > 0 {
+			m.enableDemo(min(*demo, 10000))
+		}
+		m.fixtureDir = *fixtureDir
+		if err := runDesignBridge(m, *profile, os.Stdin, os.Stdout); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
+	if !experimentalFrontend {
+		// Move the pre-rename profile directory to retain the library,
+		// queue and saved session. The experimental GTK entry skips this.
+		_ = appmeta.MigrateDataDir()
+	}
+	if err := validateFrontend(*demo, *profile, *backgroundCheck); err != nil {
+		log.Fatal(err)
+	}
 	m := newModel()
 	if *demo > 0 {
 		m.enableDemo(min(*demo, 10000))
@@ -313,8 +336,8 @@ func main() {
 		}
 		defer m.player.Close()
 	}
-	if err := runMusic(m); err != nil {
-		log.Fatal("native application failed")
+	if err := runFrontend(m); err != nil {
+		log.Fatalf("native application failed: %v", err)
 	}
 }
 

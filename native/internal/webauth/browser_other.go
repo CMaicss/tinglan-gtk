@@ -7,6 +7,6 @@ import (
 )
 
 func Authorize(ctx context.Context, flow Flow) (string, error) {
-	return ChromiumAuthorize(ctx, attempt)
+	return ChromiumAuthorize(ctx, flow)
 }
 func NeedsManualCallback() bool { return false }

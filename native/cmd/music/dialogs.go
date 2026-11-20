@@ -715,7 +715,7 @@ func (m *model) paintAccountSwitchDialog(c *ui.Canvas, size ui.Size) {
 // searchSource searches the currently selected platform tab. The selection is
 // clamped to an enabled source, so disabling a plugin never leaves the page
 // querying a stale source.
-func (m *model) searchTracks(ctx context.Context, query string, start int) ([]music.Track, int, error) {
+func (m *model) searchCatalog() source.CatalogSource {
 	catalog := m.catalogSource()
 	if enabled := m.dialogSources(); len(enabled) > 0 {
 		id := m.searchSource
@@ -728,6 +728,13 @@ func (m *model) searchTracks(ctx context.Context, query string, start int) ([]mu
 				break
 			}
 		}
+	}
+	return catalog
+}
+
+func searchTracks(ctx context.Context, catalog source.CatalogSource, query string, start int) ([]music.Track, int, error) {
+	if catalog == nil {
+		return nil, start, errNoSource
 	}
 	cursor := ""
 	if start > 0 {

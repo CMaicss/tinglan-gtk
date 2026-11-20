@@ -1,4 +1,5 @@
-name: Tinglan native builds
+name: Tinglan Linux GTK builds
+
 on:
   push:
     branches: [main]
@@ -7,249 +8,118 @@ on:
     types: [opened, synchronize, reopened, ready_for_review]
   workflow_dispatch:
     inputs:
-      mac_arm64:
-        description: macOS Apple Silicon DMG
-        type: boolean
-        default: false
-      mac_x64:
-        description: macOS Intel DMG
-        type: boolean
-        default: false
-      windows_x64:
-        description: Windows x64 installer
-        type: boolean
-        default: false
       plugins:
-        description: 'Plugins to package: "all" or comma-separated ids (empty = none)'
+        description: 'Linux plugin IDs (comma-separated, all, or empty for none)'
         type: string
         default: all
+
 permissions:
   contents: read
 concurrency:
   group: native-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
 jobs:
-  plan:
-    if: github.event_name != 'pull_request'
-    runs-on: ubuntu-latest
+  linux:
+    name: Build gate
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      CGO_ENABLED: '1'
+      TINGLAN_PLUGINS: ${{ github.event_name == 'push' && 'all' || inputs.plugins }}
     outputs:
-      matrix: ${{ steps.targets.outputs.matrix }}
-      plugins: ${{ steps.targets.outputs.plugins }}
-    steps:
-      - uses: actions/checkout@v4
-      - id: targets
-        env:
-          EVENT: ${{ github.event_name }}
-          REF: ${{ github.ref }}
-          MAC_ARM64: ${{ inputs.mac_arm64 }}
-          MAC_X64: ${{ inputs.mac_x64 }}
-          WINDOWS_X64: ${{ inputs.windows_x64 }}
-          PLUGINS: ${{ inputs.plugins }}
-        working-directory: native
-        run: go run ./cmd/tinglan-tool ci-targets
-  build:
-    if: github.event_name != 'pull_request'
-    needs: plan
-    name: Build ${{ matrix.id }}
-    strategy:
-      fail-fast: false
-      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 40
-    defaults:
-      run:
-        shell: bash
+      version: ${{ steps.version.outputs.value }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
           go-version-file: native/go.mod
           cache-dependency-path: native/go.sum
-      - name: Windows C compiler
-        id: msys
-        if: runner.os == 'Windows'
-        uses: msys2/setup-msys2@v2
+      - name: Test model and build Linux binary
+        working-directory: native
+        run: |
+          go test ./cmd/music ./internal/lyrics ./internal/plugin ./internal/storage ./internal/webauth -timeout 180s
+          mkdir -p ../out/native
+          go build -trimpath -ldflags='-s -w' -o ../out/native/tinglan ./cmd/music
+      - name: Read version
+        id: version
+        if: github.event_name != 'pull_request'
+        working-directory: native
+        run: |
+          version=$(go run ./cmd/tinglan-tool version --short)
+          printf 'value=%s\n' "$version" >> "$GITHUB_OUTPUT"
+      - name: Install Linux packaging tools
+        if: github.event_name != 'pull_request'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends rpm cpio squashfs-tools desktop-file-utils file
+      - name: Fetch and verify AppImage tooling
+        if: github.event_name != 'pull_request'
+        run: |
+          curl --fail --location --retry 3 -o "$RUNNER_TEMP/appimagetool" https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
+          curl --fail --location --retry 3 -o "$RUNNER_TEMP/appimage-runtime" https://github.com/AppImage/type2-runtime/releases/download/continuous/runtime-x86_64
+          (cd "$RUNNER_TEMP" && printf '%s\n' \
+            'e8c1169c4af66c3184d7ee110713d4be04befe671fa358e2c1591ee840553b03  appimagetool' \
+            '617aa77314d57c8b8e4fae9c3f0b35af7b30d5529cb69e98f64f92510ed98a46  appimage-runtime' | sha256sum --check)
+          chmod +x "$RUNNER_TEMP/appimagetool"
+      - name: Build and verify deb, rpm and AppImage
+        if: github.event_name != 'pull_request'
+        env:
+          VERSION: ${{ steps.version.outputs.value }}
+        run: |
+          APPIMAGETOOL="$RUNNER_TEMP/appimagetool" APPIMAGE_RUNTIME="$RUNNER_TEMP/appimage-runtime" \
+            bash native/scripts/package-linux.sh out/native/tinglan "$VERSION" release/native/linux-x64
+      - name: Build and verify selected Linux plugins
+        if: github.event_name != 'pull_request' && env.TINGLAN_PLUGINS != ''
+        working-directory: native
+        run: |
+          go run ./cmd/tinglan-tool plugins
+          cd ../release/plugins
+          sha256sum --check SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        if: github.event_name != 'pull_request'
         with:
-          msystem: UCRT64
-          update: true
-          install: mingw-w64-ucrt-x86_64-gcc
-          path-type: inherit
-      - name: Configure Windows tools
-        if: runner.os == 'Windows'
-        shell: pwsh
-        env:
-          MSYS_ROOT: ${{ steps.msys.outputs.msys2-location }}
-        run: |
-          $bin = Join-Path $env:MSYS_ROOT "ucrt64/bin"
-          $cc = Join-Path $bin "gcc.exe"
-          if (!(Test-Path $cc)) { throw "Missing C compiler: $cc" }
-          $bin >> $env:GITHUB_PATH
-          "CC=$cc" >> $env:GITHUB_ENV
-          "CGO_ENABLED=1" >> $env:GITHUB_ENV
-          choco install nsis --yes --no-progress
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          "HWMUSIC_MAKENSIS=C:/Program Files (x86)/NSIS/makensis.exe" >> $env:GITHUB_ENV
-      - name: Verify architecture
-        env:
-          EXPECTED_ARCH: ${{ matrix.arch }}
-        shell: bash
-        run: |
-          want="$EXPECTED_ARCH"
-          [ "$want" = "x64" ] && want=amd64
-          test "$(go env GOARCH)" = "$want"
-      - name: Dependencies and license sources
-        working-directory: native
-        run: go mod download
-      - name: Tests
-        working-directory: native
-        run: go test ./... -count=1 -timeout 180s
-      - name: Windows authorization window regression
-        if: runner.os == 'Windows'
-        working-directory: native
-        env:
-          HWMUSIC_TEST_BROWSER: '1'
-          HWMUSIC_TEST_BROWSER_VISIBLE: '1'
-        run: go test ./internal/webauth -run TestSyntheticBrowser -count=1 -v -timeout 120s
-      - name: Windows WebView2 authorization regression
-        if: runner.os == 'Windows'
-        working-directory: native
-        env:
-          HWMUSIC_TEST_WEBVIEW2: '1'
-        run: go test ./internal/webauth -run 'TestWebView|TestSyntheticWebView' -count=1 -v -timeout 240s
-      - name: Static checks
-        working-directory: native
-        run: go vet ./...
-      - name: UI checks
-        working-directory: native
-        run: go run ./cmd/tinglan-tool ui-check
-      - name: Package
-        working-directory: native
-        run: go run ./cmd/tinglan-tool package ${{ matrix.platform }} ${{ matrix.arch }}
-      - name: Package plugins
-        if: needs.plan.outputs.plugins != ''
-        working-directory: native
-        shell: bash
-        env:
-          TINGLAN_PLUGINS: ${{ needs.plan.outputs.plugins }}
-        run: |
-          case "${{ matrix.id }}" in
-            macos-arm64) target=darwin-arm64 ;;
-            macos-x64) target=darwin-x64 ;;
-            windows-x64) target=windows-x64 ;;
-            *) echo "unknown matrix target"; exit 1 ;;
-          esac
-          go run ./cmd/tinglan-tool plugins "$target"
-      - name: Check Windows installation
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: ./native/scripts/check-windows-install.ps1
-      - name: Check Windows installer pages
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: ./native/scripts/check-windows-installer-ui.ps1
-      - name: Upload installer and checksum
-        uses: actions/upload-artifact@v4
-        with:
-          name: tinglan-${{ matrix.id }}-unsigned
-          path: release/native/${{ matrix.directory }}/*
+          name: tinglan-linux-x64
+          path: release/native/linux-x64/*
           if-no-files-found: error
-          retention-days: 14
-      - name: Upload plugin packages
-        if: needs.plan.outputs.plugins != ''
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
+        if: github.event_name != 'pull_request' && env.TINGLAN_PLUGINS != ''
         with:
-          name: tinglan-${{ matrix.id }}-plugins
+          name: tinglan-linux-x64-plugins
           path: release/plugins/*
           if-no-files-found: error
-          retention-days: 14
-      - name: Upload failure diagnostics
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: diagnostics-${{ matrix.id }}
-          path: out/native/qa/
-          if-no-files-found: ignore
-  pr-check:
-    name: PR code checks
-    if: github.event_name == 'pull_request' && !github.event.pull_request.draft
-    runs-on: macos-15
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: native/go.mod
-          cache-dependency-path: native/go.sum
-      - name: Tests and static checks (no package)
-        working-directory: native
-        run: |
-          go test ./... -count=1 -timeout 180s
-          go vet ./...
-  gate:
-    name: Build gate
-    if: always() && (github.event_name != 'pull_request' || !github.event.pull_request.draft)
-    needs: [plan, build, pr-check]
-    runs-on: ubuntu-latest
-    steps:
-      - env:
-          EVENT: ${{ github.event_name }}
-          PR_CHECK: ${{ needs.pr-check.result }}
-          PLAN: ${{ needs.plan.result }}
-          BUILD: ${{ needs.build.result }}
-        run: |
-          if [ "$EVENT" = pull_request ]; then
-            test "$PR_CHECK" = success
-          else
-            test "$PLAN" = success && test "$BUILD" = success
-          fi
-  release:
-    name: Publish latest
-    needs: gate
-    if: always() && needs.gate.result == 'success' && github.event_name == 'push' && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
+
+  publish:
+    needs: linux
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
-          pattern: tinglan-*-unsigned
-          path: artifacts
+          name: tinglan-linux-x64
+          path: packages
       - uses: actions/download-artifact@v4
         with:
-          pattern: tinglan-*-plugins
-          path: plugin-artifacts
-      - name: Verify all three installers
-        run: |
-          set -euo pipefail
-          mkdir release-assets
-          for target in macos-arm64 macos-x64 windows-x64; do
-            dir="artifacts/tinglan-${target}-unsigned"
-            (cd "$dir" && sha256sum --check SHA256SUMS)
-            find "$dir" -maxdepth 1 -type f \( -name '*.dmg' -o -name '*.exe' \) -exec cp {} release-assets/ \;
-            cat "$dir/SHA256SUMS" >> release-assets/SHA256SUMS
-          done
-          found=0
-          while IFS= read -r -d '' bundle; do
-            (cd "$(dirname "$bundle")" && sha256sum --check SHA256SUMS)
-            cp "$bundle" release-assets/
-            found=$((found+1))
-          done < <(find plugin-artifacts -name '*.zip' -print0)
-          expected=$(( $(ls -d plugins/*/ | wc -l) * 3 ))
-          test "$found" -eq "$expected"
-          for sums in plugin-artifacts/*/SHA256SUMS; do
-            cat "$sums" >> release-assets/SHA256SUMS
-          done
-          test "$(find release-assets -maxdepth 1 -type f \( -name '*.dmg' -o -name '*.exe' \) | wc -l)" -eq 3
-      - name: Publish immutable build as latest
+          name: tinglan-linux-x64-plugins
+          path: plugins
+      - name: Verify and publish immutable Linux build
         env:
           GH_TOKEN: ${{ github.token }}
-          COMMIT: ${{ github.sha }}
+          VERSION: ${{ needs.linux.outputs.version }}
           RUN_NUMBER: ${{ github.run_number }}
+          COMMIT: ${{ github.sha }}
         run: |
           set -euo pipefail
-          version=$(cd native && go run ./cmd/tinglan-tool version --short)
-          tag="v${version}-build.${RUN_NUMBER}"
-          gh release create "$tag" release-assets/* --target "$COMMIT" \
-            --latest --title "听澜 Tinglan ${version} · Build ${RUN_NUMBER}" \
-            --notes-file docs/RELEASE_NOTES.md
+          (cd packages && sha256sum --check SHA256SUMS)
+          (cd plugins && sha256sum --check SHA256SUMS)
+          mkdir release-assets
+          cp "packages/tinglan_${VERSION}-1_amd64.deb" "packages/tinglan-${VERSION}-1.x86_64.rpm" \
+            "packages/tinglan-${VERSION}-x86_64.AppImage" plugins/*.zip release-assets/
+          (cd release-assets && sha256sum -- *.deb *.rpm *.AppImage *.zip > SHA256SUMS)
+          gh release create "v${VERSION}-build.${RUN_NUMBER}" release-assets/* \
+            --repo "$GITHUB_REPOSITORY" --target "$COMMIT" --latest \
+            --title "听澜 Tinglan ${VERSION} · Linux Build ${RUN_NUMBER}" \
+            --notes '未签名、非官方 Linux x86_64 构建。OAuth 身份不属于本项目。AppImage 仍需要系统 Python 3、PyGObject、GTK4 和 libadwaita ≥ 1.6；音源插件单独安装。'
