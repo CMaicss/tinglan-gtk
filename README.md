@@ -13,7 +13,7 @@
   <a href="#参与贡献-contributing">参与贡献</a>
 </p>
 
-![听澜 GTK 沉浸歌词：封面与歌词分栏](docs/ui-preview/screenshots/lyrics-1140.png)
+![听澜 GTK 播放页：封面、歌词与播控](docs/ui-preview/screenshots/current/lyrics.png)
 
 > **免责声明**：本项目为非官方、实验性开源项目，与各音乐平台无隶属或合作关系。客户端仅播放用户账号已有权益允许的音频流，严格遵守各平台服务条款、会员权益及地域限制，Linux 播放器可将已获授权的音频暂存于有容量上限的私有播放缓存，复用前仍会向音源解析播放权限；不提供下载导出、离线播放或媒体文件处理功能。完整说明请参阅[免责声明与使用边界](docs/DISCLAIMER.md)。
 
@@ -56,11 +56,13 @@
 - **异常自动容错**：流解析或解码失败时自动跳至下一首，同时在播放器上保留显式的重试入口。
 
 <details>
-<summary><strong>看看 GTK 歌词页 · 大屏布局</strong></summary>
+<summary><strong>看看 GTK 歌词页 · 隐藏上下栏</strong></summary>
 
-![听澜 GTK 沉浸歌词在 1920 × 1080 下的布局](docs/ui-preview/screenshots/lyrics-1920.png)
+![听澜 GTK 沉浸歌词：标题栏与播控栏隐藏](docs/ui-preview/screenshots/current/lyrics-immersive.png)
 
 </details>
+
+![听澜 GTK 播放设置](docs/ui-preview/screenshots/current/playback-settings.png)
 
 ### 3. 本机曲库与多源挂载
 
@@ -76,13 +78,13 @@
 | **多源搜索** | 启用两个及以上音源时，搜索页顶部展示平台切换页签；仅启用一个时自动隐藏以减少多余点击。结果随滚动继续加载，点歌直接加入当前队列而不替换已有队列。 |
 | **播放历史** | 仅记录在本机，不上传、不同步。 |
 
-![听澜 GTK 收藏列表](docs/ui-preview/screenshots/favorites-1140.png)
+![听澜 GTK 收藏列表](docs/ui-preview/screenshots/current/favorites.png)
 
-| 搜索 | 播放队列 |
+| 搜索 | 我的歌单 |
 | --- | --- |
-| ![听澜 GTK 搜索空态](docs/ui-preview/screenshots/search-empty-1140.png) | ![听澜 GTK 播放队列](docs/ui-preview/screenshots/queue-1140.png) |
+| ![听澜 GTK 搜索页](docs/ui-preview/screenshots/current/search.png) | ![听澜 GTK 我的歌单](docs/ui-preview/screenshots/current/playlists.png) |
 
-> 注：本页使用 GTK 界面设计稿截图，曲目为示例数据；正式客户端功能以当前版本为准。
+更多截图见[界面预览](docs/ui-preview/README.md)。
 
 ### 4. 决策模型（可选）
 
@@ -101,8 +103,6 @@
 ### 5. 外观与字体定制
 
 外观支持 **跟随系统、亮色、暗色**，强调色跟随系统。字体可直接从本机已安装字体中搜索选择，字号也能按阅读习惯自由调整。
-
-![听澜 GTK 窄窗设置界面](docs/ui-preview/screenshots/settings-400.png)
 
 ## 快速开始
 

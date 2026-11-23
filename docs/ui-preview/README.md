@@ -1,12 +1,24 @@
-# 听澜界面预览 · 2026-11-20
+# 听澜界面预览
 
-这里保留设计参考和对照截图，不存放运行时代码。GTK4 / libadwaita 界面源码位于 `native/cmd/music/designui/`，已嵌入 Linux 可执行文件。
+这里展示当前客户端截图，也保留早期设计参考。GTK4 / libadwaita 界面源码位于 `native/cmd/music/designui/`，已嵌入 Linux 可执行文件。
 
 ```sh
 ./out/native/tinglan
 ```
 
 上述命令在仓库根执行，也可在任意目录用可执行文件的绝对路径启动。桌面运行时需要 GTK4、libadwaita（至少 1.6）、系统 Python 3 和 PyGObject。默认跟随系统明暗，可用 `--dark` / `--light` 复查，以及 `--width 400 --height 680` 看窄窗；`--page lyrics` 或 `--page queue` 直达预览状态。
+
+## 当前客户端截图
+
+| 页面 | 截图 |
+| --- | --- |
+| 播放页 | [显示上下栏](screenshots/current/lyrics.png) / [隐藏上下栏](screenshots/current/lyrics-immersive.png) |
+| 我的收藏 | [收藏列表](screenshots/current/favorites.png) |
+| 搜索 | [搜索页](screenshots/current/search.png) |
+| 我的歌单 | [歌单列表](screenshots/current/playlists.png) |
+| 设置 | [播放设置](screenshots/current/playback-settings.png) |
+
+## 早期设计参考 · 2026-11-20
 
 | 场景 | 截图 |
 | --- | --- |
