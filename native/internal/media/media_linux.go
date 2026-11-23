@@ -10,6 +10,8 @@ import (
 	"github.com/godbus/dbus/v5/prop"
 	"math"
 	"sync"
+
+	"tinglan/native/internal/appmeta"
 )
 
 type Event struct {
@@ -24,6 +26,7 @@ type Controller struct {
 	position              float64
 	closed                bool
 	title, artist, status string
+	artwork               string
 	duration              float64
 	trackID               dbus.ObjectPath
 	volume                float64
@@ -57,7 +60,7 @@ func New(callback func(Event)) *Controller {
 	}
 	values := prop.Map{
 		"org.mpris.MediaPlayer2": {
-			"CanQuit": {Value: true}, "CanRaise": {Value: true}, "HasTrackList": {Value: false}, "Identity": {Value: "Tinglan"}, "DesktopEntry": {Value: "tinglan"}, "SupportedUriSchemes": {Value: []string{}}, "SupportedMimeTypes": {Value: []string{"audio/mpeg", "audio/flac"}},
+			"CanQuit": {Value: true}, "CanRaise": {Value: true}, "HasTrackList": {Value: false}, "Identity": {Value: appmeta.DisplayName}, "DesktopEntry": {Value: "org.tinglan.unofficial.gtk"}, "SupportedUriSchemes": {Value: []string{}}, "SupportedMimeTypes": {Value: []string{"audio/mpeg", "audio/flac"}},
 		},
 		playerInterface: {
 			"PlaybackStatus": {Value: "Stopped", Emit: prop.EmitTrue}, "LoopStatus": {Value: "None", Writable: true, Emit: prop.EmitTrue, Callback: func(change *prop.Change) *dbus.Error {
@@ -145,7 +148,7 @@ func (c *Controller) OpenUri(string) *dbus.Error { return dbus.MakeFailedError(e
 type errOpenURI struct{}
 
 func (errOpenURI) Error() string { return "arbitrary media URLs are not supported" }
-func (c *Controller) Update(title, artist string, duration, position float64, playing bool) {
+func (c *Controller) Update(title, artist string, duration, position float64, playing bool, artwork ...string) {
 	if c == nil {
 		return
 	}
@@ -166,10 +169,17 @@ func (c *Controller) Update(title, artist string, duration, position float64, pl
 		c.status = status
 	}
 	c.props.SetMust(playerInterface, "Position", int64(position*1e6))
-	if title != c.title || artist != c.artist || duration != c.duration {
-		c.title, c.artist, c.duration = title, artist, duration
+	art := ""
+	if title != "" && len(artwork) > 0 {
+		art = artwork[0]
+	}
+	if title != c.title || artist != c.artist || duration != c.duration || art != c.artwork {
+		c.title, c.artist, c.duration, c.artwork = title, artist, duration, art
 		c.trackID = dbus.ObjectPath(fmt.Sprintf("/org/mpris/MediaPlayer2/track_%x", sha256.Sum256([]byte(title+"\x00"+artist))))
-		c.props.SetMust(playerInterface, "Metadata", map[string]dbus.Variant{"mpris:trackid": dbus.MakeVariant(c.trackID), "mpris:length": dbus.MakeVariant(int64(duration * 1e6)), "xesam:title": dbus.MakeVariant(title), "xesam:artist": dbus.MakeVariant([]string{artist})})
+		metadata := map[string]dbus.Variant{"mpris:trackid": dbus.MakeVariant(c.trackID), "mpris:length": dbus.MakeVariant(int64(duration * 1e6)), "xesam:title": dbus.MakeVariant(title), "xesam:artist": dbus.MakeVariant([]string{artist})}
+		// godbus merges maps on SetMust; explicitly clear the previous URI.
+		metadata["mpris:artUrl"] = dbus.MakeVariant(art)
+		c.props.SetMust(playerInterface, "Metadata", metadata)
 	}
 }
 func (c *Controller) Close() {

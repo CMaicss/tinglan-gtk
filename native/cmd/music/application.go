@@ -26,6 +26,7 @@ type applicationState struct {
 	reopen          atomic.Bool
 	mediaController *media.Controller
 	mediaEvents     []media.Event
+	mediaArt        mediaArtwork
 }
 
 func (m *model) togglePlayback() {
@@ -187,10 +188,11 @@ func (m *model) updateMedia() {
 	if m.mediaController == nil {
 		return
 	}
+	art := m.updateMediaArtwork()
 	m.mediaController.Preferences(m.settings.Volume, m.settings.Shuffle, m.settings.RepeatMode)
 	if t := m.queue.Current(); t != nil {
 		position, duration := m.playbackTimes()
-		m.mediaController.Update(t.Title, t.ArtistText(), duration, position, m.audioState.Playing)
+		m.mediaController.Update(t.Title, t.ArtistText(), duration, position, m.audioState.Playing, art)
 	} else {
 		m.mediaController.Update("", "", 0, 0, false)
 	}

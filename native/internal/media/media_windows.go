@@ -156,7 +156,7 @@ func New(callback func(Event)) *Controller {
 	}
 	return c
 }
-func (c *Controller) Update(title, artist string, duration, position float64, playing bool) {
+func (c *Controller) Update(title, artist string, duration, position float64, playing bool, _ ...string) {
 	if c == nil {
 		return
 	}

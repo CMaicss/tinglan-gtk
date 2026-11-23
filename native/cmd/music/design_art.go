@@ -85,6 +85,9 @@ func designArtCommand(m *model, c designCommand) bool {
 		}
 		s := designArtFor(m)
 		s.clear, s.reply = true, nil
+		m.mediaArt.clearing = true
+		m.mediaArt.invalidate()
+		m.updateMedia()
 		if s.cancel != nil {
 			s.cancel()
 		}
@@ -184,8 +187,11 @@ func designArtState(m *model) any {
 		if err := clearDesignArt(m.store); err != nil {
 			m.setStatus("封面缓存未能全部清除")
 		} else {
+			m.mediaArt.attempted = false
 			m.setStatus("封面缓存已清除")
 		}
+		m.mediaArt.clearing = false
+		m.updateMedia()
 	}
 	v.CacheRevision, v.Clearing = s.revision, s.clear
 	v.Reply, s.reply = s.reply, nil

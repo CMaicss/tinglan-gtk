@@ -214,6 +214,10 @@ func (m *model) wake() {
 		m.attachAccount()
 		m.scheduleSessionCheck()
 	}
+	if m.mediaController != nil && (len(m.mediaArt.done) > 0 ||
+		m.mediaArt.track != m.qualityTrackKey() || m.mediaArt.epoch != m.accountEpoch) {
+		m.updateMedia()
+	}
 }
 
 func (m *model) close() {
@@ -244,6 +248,7 @@ func (m *model) close() {
 		m.mediaController.Close()
 		m.mediaController = nil
 	}
+	m.mediaArt.close()
 	m.designLyrics.close()
 	m.stopAudioCache()
 	m.saveQueue()

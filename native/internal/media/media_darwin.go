@@ -38,7 +38,7 @@ func New(callback func(Event)) *Controller {
 func hm_media_command(handle C.uintptr_t, command C.int, position C.double) {
 	cgo.Handle(handle).Value().(func(Event))(Event{int(command), float64(position)})
 }
-func (c *Controller) Update(title, artist string, duration, position float64, playing bool) {
+func (c *Controller) Update(title, artist string, duration, position float64, playing bool, _ ...string) {
 	if c == nil || c.native == nil {
 		return
 	}

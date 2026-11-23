@@ -25,6 +25,12 @@ func TestMPRISWithIsolatedBus(t *testing.T) {
 	}
 	defer conn.Close()
 	object := conn.Object(busName, objectPath)
+	for key, want := range map[string]string{"Identity": "听澜", "DesktopEntry": "org.tinglan.unofficial.gtk"} {
+		v, err := object.GetProperty("org.mpris.MediaPlayer2." + key)
+		if err != nil || v.Value() != want {
+			t.Fatalf("%s: got %v (%v), want %q", key, v, err, want)
+		}
+	}
 	c.Update("synthetic", "fixture", 100, 12, true)
 	v, err := object.GetProperty(playerInterface + ".PlaybackStatus")
 	if err != nil || v.Value() != "Playing" {
@@ -57,6 +63,17 @@ func TestMPRISWithIsolatedBus(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("volume timed out")
+	}
+	for _, art := range []string{"file:///fixture/cover.png", ""} {
+		c.Update("synthetic", "fixture", 100, 12, true, art)
+		v, err := object.GetProperty(playerInterface + ".Metadata")
+		if err != nil {
+			t.Fatal(err)
+		}
+		got, present := v.Value().(map[string]dbus.Variant)["mpris:artUrl"]
+		if !present || got.Value() != art {
+			t.Fatalf("artwork update %q: got %v, present=%t", art, got, present)
+		}
 	}
 	c.Close()
 	if object.Call(playerInterface+".Play", 0).Err == nil {
