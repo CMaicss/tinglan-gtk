@@ -22,6 +22,8 @@ class LiveQualityTest(unittest.TestCase):
             ui = Live(application, args, d.Preview)
         try:
             ui.state = {'Queue': [{'ID': 'huawei:one'}], 'Current': 0}
+            ui.update_quality(dict(ui.state, QualityRequested='lossless', QualityActual='standard', QualitySwitching=True), ui.state)
+            self.assertEqual(ui.quality_button.get_tooltip_text(), '当前音质：标准（MP3）')
             ui.quality_button.get_popover().get_child().get_last_child().emit('clicked')
             ui.more.get_popover().get_child().get_first_child().get_next_sibling().emit('clicked')
             import json

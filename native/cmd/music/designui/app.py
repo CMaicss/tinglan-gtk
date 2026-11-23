@@ -2,11 +2,12 @@
 """Tinglan GTK interface. Without a Go backend it runs in offline preview mode."""
 import argparse
 from pathlib import Path
+from weakref import WeakSet
 import gi
 
 gi.require_version('Gtk', '4.0')
 gi.require_version('Adw', '1')
-from gi.repository import Adw, Gdk, Gio, GLib, Gtk, Pango
+from gi.repository import Adw, Gdk, Gio, GLib, Graphene, Gtk, Pango
 
 UI_DIR = Path(__file__).resolve().parent
 
@@ -47,6 +48,11 @@ CSS = b'''
 .album-art { border-radius: 12px; }
 .cover-button { padding: 0; }
 .player { background: @view_bg_color; }
+.stage-glass, .stage-glass headerbar, .stage-glass .player { background: transparent; box-shadow: none; }
+.stage-glass .stage-foreground { color: #fff; }
+.stage-glass .stage-foreground headerbar button.flat, .stage-glass .player button.flat { color: #fff; }
+.stage-glass .player scale trough { background: rgba(255,255,255,.25); }
+.stage-glass .player scale highlight { background: rgba(255,255,255,.82); }
 .player button.transport-primary { min-width: 44px; min-height: 44px; padding: 0; border-width: 0; border-radius: 999px; }
 .app-brand { font-weight: 750; }
 .tinglan-sidebar { background: @sidebar_bg_color; color: @sidebar_fg_color; }
@@ -137,6 +143,111 @@ def cover(n, size, rounded=False):
     return art
 
 
+class StageBackdrop(Gtk.Widget):
+    radius = 36
+    artwork_grace_ms = 350
+
+    def __init__(self):
+        super().__init__(can_target=False, hexpand=True, vexpand=True, visible=False)
+        self.texture = None
+        self.outgoing = None
+        self.progress = 1.0
+        self.animation = None
+        self.faces = WeakSet()
+
+    @classmethod
+    def cover_rect(cls, width, height, image_width, image_height):
+        padding = cls.radius * 2
+        scale = max((width + 2 * padding) / image_width, (height + 2 * padding) / image_height)
+        w, h = image_width * scale, image_height * scale
+        return (width - w) / 2, (height - h) / 2, w, h
+
+    def repaint(self):
+        self.queue_draw()
+        for face in self.faces:
+            face.queue_draw()
+
+    def advance(self, progress):
+        self.progress = progress
+        if progress >= 1:
+            self.outgoing = None
+        self.repaint()
+
+    def set_texture(self, texture):
+        if self.texture is texture:
+            return
+        old = self.outgoing if self.outgoing is not None and self.progress < .5 else self.texture
+        if self.animation is not None:
+            self.animation.pause()
+            self.animation = None
+        self.texture = texture
+        if (old is not None and texture is not None and self.get_mapped()
+                and self.get_settings().get_property('gtk-enable-animations')):
+            self.outgoing = old
+            self.advance(0)
+            target = Adw.CallbackAnimationTarget.new(self.advance)
+            self.animation = Adw.TimedAnimation.new(self, 0, 1, 230, target)
+            self.animation.play()
+        else:
+            self.advance(1)
+
+    def paint_pair(self, snapshot, draw):
+        if self.outgoing is None:
+            draw(self.texture)
+            return
+        snapshot.push_cross_fade(self.progress)
+        draw(self.outgoing)
+        snapshot.pop()
+        draw(self.texture)
+        snapshot.pop()
+
+    def do_snapshot(self, snapshot):
+        texture = self.texture
+        width, height = self.get_width(), self.get_height()
+        if texture is None or min(width, height) <= 0:
+            return
+        viewport = Graphene.Rect().init(0, 0, width, height)
+        snapshot.push_clip(viewport)
+        snapshot.push_blur(self.radius)
+        luminance = Graphene.Matrix().init_from_float([
+            .2126, .2126, .2126, 0,
+            .7152, .7152, .7152, 0,
+            .0722, .0722, .0722, 0,
+            0, 0, 0, 1,
+        ])
+        snapshot.push_color_matrix(luminance, Graphene.Vec4().init(0, 0, 0, 0))
+        def draw(image):
+            x, y, w, h = self.cover_rect(width, height, image.get_width(), image.get_height())
+            snapshot.append_texture(image, Graphene.Rect().init(x, y, w, h))
+        self.paint_pair(snapshot, draw)
+        snapshot.pop()
+        snapshot.pop()
+        shade = Gdk.RGBA()
+        shade.parse('rgba(12, 12, 12, 0.60)')
+        snapshot.append_color(shade, viewport)
+        snapshot.pop()
+
+
+class StageCoverFace(Gtk.Widget):
+    def __init__(self, transition):
+        super().__init__(can_target=False, hexpand=True, vexpand=True)
+        self.transition = transition
+        transition.faces.add(self)
+
+    def do_snapshot(self, snapshot):
+        if self.transition.texture is None:
+            return
+        width, height = self.get_width(), self.get_height()
+        viewport = Graphene.Rect().init(0, 0, width, height)
+        snapshot.push_clip(viewport)
+        def draw(texture):
+            scale = max(width / texture.get_width(), height / texture.get_height())
+            w, h = scale * texture.get_width(), scale * texture.get_height()
+            snapshot.append_texture(texture, Graphene.Rect().init((width-w)/2, (height-h)/2, w, h))
+        self.transition.paint_pair(snapshot, draw)
+        snapshot.pop()
+
+
 class Preview:
     live = False
     art = staticmethod(cover)
@@ -177,7 +288,14 @@ class Preview:
                                                 show_sidebar=False)
         self.queue_split.set_vexpand(True)
         self.main_pane.append(self.queue_split)
-        self.nav_split.set_content(self.main_pane)
+        self.stage_backdrop = StageBackdrop()
+        self.stage_surface = Gtk.Overlay(child=self.main_pane)
+        self.stage_surface.add_overlay(self.stage_backdrop)
+        # Main content stays above a non-interactive, unmeasured background.
+        self.stage_backdrop.insert_before(self.stage_surface, self.main_pane)
+        self.stage_surface.set_measure_overlay(self.stage_backdrop, False)
+        self.main_pane.add_css_class("stage-foreground")
+        self.nav_split.set_content(self.stage_surface)
         self.queue_split.set_sidebar(self.queue_view())
         self.queue_split.connect('notify::show-sidebar', lambda *_: self.queue_state())
         self.screen.add_named(self.library(), 'favorites')
@@ -313,6 +431,45 @@ class Preview:
         if self.nav_split.get_collapsed():
             self.nav_split.set_show_sidebar(False)
         self.layout_identity()
+        self.refresh_stage_backdrop()
+
+    def refresh_stage_backdrop(self):
+        if self.view != 'lyrics' or self.current is None:
+            self.set_stage_texture(None)
+        elif (texture := self.stage_background_texture()) is not None:
+            self.set_stage_texture(texture)
+        elif self.stage_backdrop.texture is not None:
+            if not self.stage_backdrop.get_settings().get_property('gtk-enable-animations'):
+                self.set_stage_texture(None)
+            elif not getattr(self, '_stage_grace_source', 0):
+                # Repeated snapshots or rapid skips without ready artwork must
+                # not extend the lifetime of the retained image.
+                self._stage_grace_source = GLib.timeout_add(
+                    self.stage_backdrop.artwork_grace_ms, self.expire_stage_texture)
+
+    def expire_stage_texture(self):
+        self._stage_grace_source = 0
+        self.set_stage_texture(None)
+        return GLib.SOURCE_REMOVE
+
+    def set_stage_texture(self, texture):
+        if source := getattr(self, '_stage_grace_source', 0):
+            GLib.source_remove(source)
+            self._stage_grace_source = 0
+        self.stage_backdrop.set_texture(texture)
+        available = texture is not None
+        self.stage_backdrop.set_visible(available)
+        if not available:
+            self.stage_surface.remove_css_class("stage-glass")
+        else:
+            self.stage_surface.add_css_class("stage-glass")
+
+    def stage_background_texture(self):
+        n = self.current
+        if getattr(self, "_preview_backdrop_track", None) != n:
+            self._preview_backdrop_track = n
+            self._preview_backdrop_texture = cover(n, 240).get_paintable()
+        return self._preview_backdrop_texture
 
     def page(self, name):
         content = margin(box(True, 16), 24, 12)
@@ -801,7 +958,12 @@ class Preview:
         artwork.set_halign(Gtk.Align.CENTER)
         artwork_variants = Gtk.Stack(hhomogeneous=False, vhomogeneous=False)
         for name, size in (('compact', 136), ('regular', 296), ('large', 424)):
-            artwork_variants.add_named(self.stage_art(self.current, size), name)
+            slot = Gtk.Overlay(child=self.stage_art(self.current, size), overflow=Gtk.Overflow.HIDDEN)
+            slot.add_css_class("album-art")
+            face = StageCoverFace(self.stage_backdrop)
+            slot.add_overlay(face)
+            slot.set_measure_overlay(face, False)
+            artwork_variants.add_named(slot, name)
         artwork_variants.set_visible_child_name('regular')
         artwork.append(artwork_variants)
         self.stage_cover = artwork_variants

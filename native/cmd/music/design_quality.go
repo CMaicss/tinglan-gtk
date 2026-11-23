@@ -38,6 +38,14 @@ func (m *model) qualityNotice(text string) {
 	m.qualitySwitch.serial++
 }
 
+func (m *model) qualitySwitchFailed(tier string) {
+	label := "标准"
+	if tier == "lossless" {
+		label = "无损"
+	}
+	m.qualityNotice("当前歌曲无法切换为" + label)
+}
+
 func (m *model) cancelQualitySwitch() {
 	s := &m.qualitySwitch
 	if s.cancel != nil {
@@ -67,7 +75,7 @@ func (m *model) switchDesignQuality(id, quality string) {
 	row, ok := m.canonicalFor(*m.queue.Current())
 	resolver := m.resolver
 	if !ok || resolver == nil {
-		m.qualityNotice("无法切换音质，仍使用原音频流")
+		m.qualitySwitchFailed(quality)
 		return
 	}
 	// Switch the encoding of the playing source, not the recording/provider.
@@ -203,24 +211,20 @@ func (m *model) applyQualityResult(r playbackResult) {
 		if r.player != nil {
 			r.player.Close()
 		}
-		if errors.Is(r.err, errUnavailableQuality) {
-			m.qualityNotice("当前音源未提供所选音质，继续播放原音频流")
-		} else {
-			m.qualityNotice("音质切换失败，继续使用原音频流")
-		}
+		m.qualitySwitchFailed(s.preferred)
 		return
 	}
 	old := m.player
 	candidate := r.player.Snapshot()
 	if !candidate.Ready || candidate.Failed || candidate.Ended {
 		r.player.Close()
-		m.qualityNotice("音质切换失败，继续使用原音频流")
+		m.qualitySwitchFailed(s.preferred)
 		return
 	}
 	current := old.Snapshot()
 	if current.Ended || math.Abs(current.Position-candidate.Position) > 2 {
 		r.player.Close()
-		m.qualityNotice("播放进度已变化，请重新切换音质")
+		m.qualitySwitchFailed(s.preferred)
 		return
 	}
 	m.cancelCachedSeek()
@@ -239,9 +243,4 @@ func (m *model) applyQualityResult(r playbackResult) {
 		m.fillAudioCache(r.audioCacheKey, r.playback.URL, r.playback.Quality)
 	}
 	go old.Close()
-	if m.actualQuality == "lossless" {
-		m.qualityNotice("已切换到无损（FLAC）")
-	} else {
-		m.qualityNotice("已切换到标准（MP3）")
-	}
 }

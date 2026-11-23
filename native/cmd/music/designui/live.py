@@ -201,6 +201,16 @@ def Live(app, args, preview):
         def art(self, n, size, rounded=False):
             return self.art_build(n, size, rounded)
 
+        def stage_background_texture(self):
+            ref = self._art_ref(("Stage", self.current), self.state)
+            if ref is None:
+                return None
+            high, _ = self._art_textures.get(self._art_key(ref), (None, 0))
+            thumb, _ = self._art_textures.get((False, ref[2]), (None, 0))
+            if thumb is not None and (high is None or thumb.get_width() > high.get_width()):
+                return thumb
+            return high
+
         def stage_art(self, n, size):
             return self.art_build(("Stage", n), size)
 
@@ -296,10 +306,7 @@ def Live(app, args, preview):
                 badge.set_visible(state.get("QualityActual") == "lossless")
             labels = {"standard": "标准（MP3）", "lossless": "无损（FLAC）"}
             actual = labels.get(state.get("QualityActual"), "未确认")
-            wanted = labels.get(state.get("QualityRequested"), "标准")
-            text = f"请求：{wanted} · 当前：{actual}"
-            if state.get("QualitySwitching"):
-                text += " · 正在切换…"
+            text = f"当前音质：{actual}"
             self.quality_button.set_tooltip_text(text)
             self.more.set_tooltip_text("播放选项 · " + text)
             self.quality_button.set_sensitive(state.get("Current", -1) >= 0)
@@ -413,7 +420,12 @@ def Live(app, args, preview):
                 self.refresh_queue()
             for row in self.track_rows:
                 (row.add_css_class if row.track==self.current else row.remove_css_class)('current')
+            wire = state.get("Art") or {}
+            epoch = (wire.get("Epoch"), wire.get("CacheRevision", 0))
+            if epoch != self._art_epoch:
+                self.set_stage_texture(None)
             self.art_apply(state)
+            self.refresh_stage_backdrop()
             if self.view == 'lyrics':
                 self.request_visible_lyrics()
                 if (last != self.current or state.get('Lyrics') != old.get('Lyrics')

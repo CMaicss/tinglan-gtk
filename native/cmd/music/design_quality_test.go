@@ -3,8 +3,24 @@ package main
 import (
 	"testing"
 
+	"tinglan/native/internal/audio"
 	"tinglan/native/internal/music"
 )
+
+func TestDesignQualityFailedSwitchNamesTargetAndKeepsCurrent(t *testing.T) {
+	for tier, want := range map[string]string{"lossless": "当前歌曲无法切换为无损", "standard": "当前歌曲无法切换为标准"} {
+		m := newModel()
+		original := new(audio.Player)
+		m.player = original
+		m.qualitySwitch.preferred = tier
+		m.applyQualityResult(playbackResult{err: errUnavailableQuality})
+		if m.player != original || m.qualitySwitch.notice != want || m.qualitySwitch.serial != 1 {
+			t.Errorf("unexpected failure feedback for %s: %q", tier, m.qualitySwitch.notice)
+		}
+		m.player = nil // the sentinel is not an opened player
+		m.close()
+	}
+}
 
 func TestDesignQualityRequestDuringLoadDoesNotRestartResolve(t *testing.T) {
 	m := newModel()
