@@ -26,16 +26,20 @@ type cachedResolve struct {
 }
 
 type playbackResult struct {
-	generation    uint64
-	player        *audio.Player
-	playback      music.Playback
-	link          music.SourceLink
-	lyrics        []lyrics.Line
-	lyricSource   string
-	err           error
-	lyricsOnly    bool
-	qualitySwitch bool
-	switchRequest uint64
+	generation     uint64
+	player         *audio.Player
+	playback       music.Playback
+	link           music.SourceLink
+	lyrics         []lyrics.Line
+	lyricSource    string
+	err            error
+	lyricsOnly     bool
+	qualitySwitch  bool
+	fromAudioCache bool
+	audioCacheKey  string
+	switchRequest  uint64
+	cachedSeek     bool
+	seekOriginal   *audio.Player
 }
 
 func lyricsCacheKey(link music.SourceLink) string {
@@ -57,6 +61,9 @@ func (m *model) resolveCurrent() {
 	m.resolving = true
 	quality := m.requestedQuality()
 	store := m.store
+	cache, scope, resume := m.audioCache, m.audioCacheScope(), m.pendingSeek
+	checkPersistent := cache != nil && scope != "" && m.settings.AudioCacheMiB > 0
+	lyricsKey := m.trackLyricsKey(*track)
 	fallbackEnabled := m.settings.ThirdPartyLyrics
 	query := lyrics.Query{Title: track.Title, Artist: track.ArtistText()}
 	if track.Duration != nil {
@@ -74,7 +81,7 @@ func (m *model) resolveCurrent() {
 			m.resolveMu.Lock()
 			cached, hit := m.resolveCache[cacheKey]
 			m.resolveMu.Unlock()
-			if hit && time.Since(cached.at) < 5*time.Minute && cached.playback.URL != "" {
+			if !checkPersistent && hit && time.Since(cached.at) < 5*time.Minute && cached.playback.URL != "" {
 				resolved = playback.Result{Playback: cached.playback, Link: cached.link, Access: cached.access}
 			} else {
 				resolved, r.err = m.resolver.Resolve(ctx, row, quality)
@@ -90,7 +97,24 @@ func (m *model) resolveCurrent() {
 			r.playback = resolved.Playback
 			r.link = resolved.Link
 			if r.err == nil {
-				r.player, r.playback.Quality, r.err = openRemote(ctx, r.playback.URL)
+				if checkPersistent && resolved.Access != music.AccessPreview {
+					tier := resolved.Playback.Quality
+					if tier != "lossless" && tier != "standard" {
+						tier = quality
+					}
+					key := audioCacheKey(scope, r.link, tier)
+					if key != "" {
+						if player, actual := cachedResume(ctx, cache, key, tier, resume); player != nil {
+							r.player, r.playback.Quality, r.fromAudioCache = player, actual, true
+						}
+					}
+				}
+				if r.player == nil {
+					r.player, r.playback.Quality, r.err = openRemote(ctx, r.playback.URL)
+				}
+				if checkPersistent && resolved.Access != music.AccessPreview && r.err == nil {
+					r.audioCacheKey = audioCacheKey(scope, r.link, r.playback.Quality)
+				}
 			}
 		}
 		if r.err != nil {
@@ -102,7 +126,7 @@ func (m *model) resolveCurrent() {
 		// on the critical path (the third-party fallback can take seconds).
 		text := r.playback.LyricText
 		r.lyricSource = sourceLabel(r.link.Source.String())
-		key := m.trackLyricsKey(*track)
+		key := lyricsKey
 		cached := false
 		if store != nil {
 			if doc, err := store.LoadLyrics(key); err == nil {
@@ -247,6 +271,10 @@ func (m *model) applyPlaybackResults() {
 			}
 			continue
 		}
+		if r.cachedSeek {
+			m.applyCachedSeek(r)
+			continue
+		}
 		if r.qualitySwitch {
 			m.applyQualityResult(r)
 			continue
@@ -291,6 +319,14 @@ func (m *model) applyPlaybackResults() {
 			continue
 		}
 		m.player = r.player
+		m.activeAudioCacheKey = r.audioCacheKey
+		restartedAtBeginning := runtime.GOOS == "linux" && m.pendingSeek > 0 && !r.fromAudioCache
+		if runtime.GOOS == "linux" {
+			m.pendingSeek = 0 // online playback never seeks on resume; a cache hit is already positioned
+		}
+		if !r.fromAudioCache && r.audioCacheKey != "" {
+			m.fillAudioCache(r.audioCacheKey, r.playback.URL, r.playback.Quality)
+		}
 		m.playbackError = ""
 		m.playFailures = 0
 		m.lyricLines = r.lyrics
@@ -307,6 +343,9 @@ func (m *model) applyPlaybackResults() {
 		m.audioRunning = true
 		m.startedAt = time.Now()
 		m.announceAccess(r)
+		if restartedAtBeginning {
+			m.setStatus("音频缓存不可用，已从头播放")
+		}
 		m.pollAudio()
 		if afterLoad && r.generation == m.playbackGeneration {
 			m.switchDesignQuality(m.qualityTrackKey(), m.requestedQuality())
@@ -315,6 +354,9 @@ func (m *model) applyPlaybackResults() {
 }
 
 func (m *model) cancelPlayback() {
+	m.cancelCachedSeek()
+	m.activeAudioCacheKey = ""
+	m.cancelAudioCache()
 	m.cancelQualitySwitch()
 	m.qualitySwitch.track, m.qualitySwitch.preferred = "", ""
 	m.playbackGeneration++
@@ -344,7 +386,12 @@ func (m *model) seekPlayback(seconds float64) {
 		return
 	}
 	seconds = max(0, min(seconds, state.Duration))
-	if m.player.Seek(seconds) != nil {
+	if err := m.player.Seek(seconds); err != nil {
+		if errors.Is(err, audio.ErrOnlineSeekNeedsCache) {
+			m.startCachedSeek(seconds)
+		} else {
+			m.qualityNotice("当前音频无法定位")
+		}
 		return
 	}
 	m.pendingSeek = 0

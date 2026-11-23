@@ -38,6 +38,15 @@ def Live(app, args, preview):
                 stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True, encoding='utf-8')
             self.win.connect('close-request', self.close_backend)
             self.volume_button.connect('value-changed', lambda _, v: None if self.syncing else self.send('volume', Value=v))
+            self.seek_target = None
+            self.seek_drag_origin = 0
+            self.seek_position = 0
+            self.seek_drag = Gtk.GestureDrag(button=1, propagation_phase=Gtk.PropagationPhase.CAPTURE)
+            self.seek_drag.connect('drag-begin', self.seek_begin)
+            self.seek_drag.connect('drag-update', self.seek_preview)
+            self.seek_drag.connect('drag-end', self.seek_end)
+            self.seek_drag.connect('cancel', self.seek_cancel)
+            self.seek.add_controller(self.seek_drag)
             self.seek.connect('change-value', self.seek_changed)
             threading.Thread(target=self.read_backend, daemon=True).start()
             self.next_normal_poll = monotonic() + .45
@@ -135,8 +144,57 @@ def Live(app, args, preview):
                 self.send('state')
             return True
 
+        def seek_current_target(self):
+            rows = self.state.get('Queue') or []
+            index = self.state.get('Current', -1)
+            return (index, rows[index]['ID']) if 0 <= index < len(rows) else None
+
+        def sync_seek(self, duration, position, pending=None):
+            self.seek_position = position
+            if self.seek_target is not None and self.seek_target != self.seek_current_target():
+                self.seek_target = None
+            self.seek.set_range(0, max(1, duration))
+            if self.seek_target is None:
+                self.seek.set_value(position if pending is None else pending)
+
+        def seek_begin(self, gesture, x, _):
+            # Own the pointer sequence before the scale's native gesture.
+            gesture.set_state(Gtk.EventSequenceState.CLAIMED)
+            self.seek.grab_focus()
+            self.seek_target = self.seek_current_target()
+            self.seek_drag_origin = x
+            self.seek_preview(gesture, 0, 0)
+
+        def seek_preview(self, _, offset, __):
+            if self.seek_target is None or self.seek_target != self.seek_current_target():
+                return
+            rect = self.seek.get_range_rect()
+            left, right = self.seek.get_slider_range()
+            inset = max(0, (right - left) / 2)
+            fraction = (self.seek_drag_origin + offset - rect.x - inset) / max(1, rect.width - 2 * inset)
+            if self.seek.get_inverted() != (self.seek.get_flippable() and self.seek.get_direction() == Gtk.TextDirection.RTL):
+                fraction = 1 - fraction
+            adj = self.seek.get_adjustment()
+            self.seek.set_value(adj.get_lower() + max(0, min(1, fraction)) * (adj.get_upper() - adj.get_lower()))
+
+        def seek_end(self, gesture, offset, y):
+            if self.seek_target is None:
+                return
+            if self.seek_target != self.seek_current_target():
+                self.seek_cancel(gesture, None)
+                return
+            self.seek_preview(gesture, offset, y)
+            self.seek_target = None
+            self.send('seek', Value=self.seek.get_value())
+
+        def seek_cancel(self, _, __):
+            if self.seek_target is not None:
+                self.seek_target = None
+                self.seek.set_value(self.seek_position)
+
         def seek_changed(self, _, __, value):
-            if not self.syncing:
+            # Non-drag changes (keyboard, scroll) still seek immediately.
+            if not self.syncing and self.seek_target is None:
                 self.send('seek', Value=value)
             return True
 
@@ -348,8 +406,7 @@ def Live(app, args, preview):
             length = state['Duration'] or sum(int(v)*60**i for i,v in enumerate(reversed(duration.split(':'))) if v.isdigit())
             self.syncing = True
             self.volume_button.set_value(state['Volume'])
-            self.seek.set_range(0, max(1,length))
-            self.seek.set_value(state['Position'])
+            self.sync_seek(length, state['Position'], state.get('SeekTarget') if state.get('SeekPending') else None)
             self.total.set_text(f'{int(length)//60}:{int(length)%60:02}')
             self.syncing = False
             if last != self.current or state['Queue'] != old.get('Queue'):

@@ -27,6 +27,8 @@ type designState struct {
 	LyricPhase                                                 string
 	QualityRequested, QualityActual, QualityNotice             string
 	QualitySwitching                                           bool
+	SeekPending                                                bool
+	SeekTarget                                                 float64
 	QualityNoticeSerial                                        uint64
 	Favorites, Results, History, Queue, Detail                 []designTrack
 	Playlists                                                  []designPlaylist
@@ -59,6 +61,7 @@ func designSnapshotWithWindow(m *model, quit bool) designState {
 	phase := m.updateDesignLyrics("")
 	collections, settings, art := designCollectionState(m), designSettingsState(m), designArtState(m)
 	s := designState{Collections: collections, Settings: settings, Art: art, Favorites: designTracks(m.tracks), Results: designTracks(m.filtered), History: designTracks(m.localHistory), Queue: designTracks(m.queue.Tracks), Detail: designTracks(m.localTracks), Current: -1, Position: m.audioState.Position, Duration: m.audioState.Duration, Volume: m.settings.Volume, Playing: m.audioState.Playing, SignedIn: m.session != nil, Restoring: m.restoring, Searching: m.searchLoading, More: m.searchMore, SearchError: m.searchError, Status: m.status}
+	s.SeekPending, s.SeekTarget = m.cacheSeek.cancel != nil, m.cacheSeek.target
 	s.QualityRequested, s.QualitySwitching = m.requestedQuality(), m.qualitySwitch.cancel != nil
 	if m.player != nil {
 		s.QualityActual = m.actualQuality

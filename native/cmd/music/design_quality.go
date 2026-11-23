@@ -78,7 +78,12 @@ func (m *model) switchDesignQuality(id, quality string) {
 		s.workers = make(chan struct{}, 2)
 	}
 	workers := s.workers
-	ctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Second)
+	cache, scope, cacheDone := m.audioCache, m.audioCacheScope(), m.audioCacheDone
+	cacheEnabled := cache != nil && m.settings.AudioCacheMiB > 0
+	if cacheEnabled {
+		m.cancelAudioCache()
+	}
 	s.cancel = cancel
 	old := m.player
 	request, generation := s.request, m.playbackGeneration
@@ -103,9 +108,40 @@ func (m *model) switchDesignQuality(id, quality string) {
 			return
 		}
 		result.player, result.playback.Quality, result.err = openRemote(ctx, result.playback.URL)
-		if result.err == nil {
-			result.err = prepareQualityPosition(ctx, old, result.player, quality, result.playback.Quality)
+		if result.err != nil {
+			return
 		}
+		result.err = prepareQualityPosition(ctx, old, result.player, quality, result.playback.Quality)
+		if cacheEnabled {
+			result.audioCacheKey = audioCacheKey(scope, result.link, result.playback.Quality)
+		}
+		if !errors.Is(result.err, audio.ErrOnlineSeekNeedsCache) || result.audioCacheKey == "" {
+			return
+		}
+		result.player.Close()
+		result.player = nil
+		if cacheDone != nil {
+			select {
+			case <-cacheDone:
+			case <-ctx.Done():
+				result.err = ctx.Err()
+				return
+			}
+		}
+		if result.err = downloadAudioCache(ctx, cache, result.audioCacheKey, result.playback.URL, quality); result.err != nil {
+			return
+		}
+		current := old.Snapshot()
+		if !current.Ready || current.Failed || current.Ended {
+			result.err = errUnavailableQuality
+			return
+		}
+		result.player, result.playback.Quality = cachedResume(ctx, cache, result.audioCacheKey, quality, current.Position)
+		if result.player == nil {
+			result.err = errUnavailableQuality
+			return
+		}
+		result.fromAudioCache = true
 	}()
 }
 
@@ -187,6 +223,8 @@ func (m *model) applyQualityResult(r playbackResult) {
 		m.qualityNotice("播放进度已变化，请重新切换音质")
 		return
 	}
+	m.cancelCachedSeek()
+	m.activeAudioCacheKey = r.audioCacheKey
 	old.Pause()
 	_ = r.player.SetVolume(m.settings.Volume)
 	m.player, m.actualQuality, m.playedLink = r.player, r.playback.Quality, r.link
@@ -197,6 +235,9 @@ func (m *model) applyQualityResult(r playbackResult) {
 		m.player.Play()
 	}
 	m.pollAudio()
+	if !r.fromAudioCache && r.audioCacheKey != "" {
+		m.fillAudioCache(r.audioCacheKey, r.playback.URL, r.playback.Quality)
+	}
 	go old.Close()
 	if m.actualQuality == "lossless" {
 		m.qualityNotice("已切换到无损（FLAC）")

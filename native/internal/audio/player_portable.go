@@ -42,6 +42,7 @@ type Player struct {
 	decodedEnd  bool
 	wantPlaying bool
 	seeking     bool
+	denySeek    bool
 	stop        chan struct{}
 	done        chan struct{}
 	seeks       chan seekRequest
@@ -87,6 +88,48 @@ func (s *bufferedAudioSource) Seek(offset int64, whence int) (int64, error) {
 	return pos, err
 }
 
+// Inspect bounded metadata, never scan audio frames to decide whether an
+// online seek would build an index. Invalid or unknown tables fail closed.
+func hasFLACSeekTable(r io.ReadSeeker) bool {
+	defer r.Seek(0, io.SeekStart)
+	if _, err := r.Seek(4, io.SeekStart); err != nil {
+		return false
+	}
+	remaining := 128*1024 - 4
+	for remaining >= 4 {
+		var h [4]byte
+		if _, err := io.ReadFull(r, h[:]); err != nil {
+			return false
+		}
+		n := int(h[1])<<16 | int(h[2])<<8 | int(h[3])
+		remaining -= n + 4
+		if remaining < 0 {
+			return false
+		}
+		if h[0]&127 == 3 {
+			if n%18 != 0 {
+				return false
+			}
+			var entry [18]byte
+			valid := false
+			for ; n > 0; n -= 18 {
+				if _, err := io.ReadFull(r, entry[:]); err != nil {
+					return false
+				}
+				valid = valid || (binary.BigEndian.Uint64(entry[:8]) != ^uint64(0) && binary.BigEndian.Uint16(entry[16:]) != 0)
+			}
+			return valid
+		}
+		if h[0]&128 != 0 {
+			return false
+		}
+		if _, err := r.Seek(int64(n), io.SeekCurrent); err != nil {
+			return false
+		}
+	}
+	return false
+}
+
 func openPortable(source io.ReadSeekCloser) (*Player, error) {
 	var magic [4]byte
 	if _, err := io.ReadFull(source, magic[:]); err != nil {
@@ -97,8 +140,13 @@ func openPortable(source io.ReadSeekCloser) (*Player, error) {
 	var decoder beep.StreamSeekCloser
 	var format beep.Format
 	var err error
+	denySeek := false
 	if string(magic[:]) == "fLaC" {
-		decoder, format, err = flac.Decode(&bufferedAudioSource{ReadSeekCloser: source, reader: bufio.NewReaderSize(source, 32768)})
+		reader := &bufferedAudioSource{ReadSeekCloser: source, reader: bufio.NewReaderSize(source, 32768)}
+		if _, online := source.(*resource.Reader); online {
+			denySeek = !hasFLACSeekTable(reader)
+		}
+		decoder, format, err = flac.Decode(reader)
 	} else if string(magic[:3]) == "ID3" || (magic[0] == 0xff && magic[1]&0xe0 == 0xe0) {
 		decoder, format, err = mp3.Decode(source)
 	} else {
@@ -108,7 +156,7 @@ func openPortable(source io.ReadSeekCloser) (*Player, error) {
 		source.Close()
 		return nil, errors.New("audio decoder unavailable")
 	}
-	p := &Player{source: source, decoder: decoder, rate: int(format.SampleRate), stop: make(chan struct{}), done: make(chan struct{}), seeks: make(chan seekRequest, 1)}
+	p := &Player{source: source, decoder: decoder, denySeek: denySeek, rate: int(format.SampleRate), stop: make(chan struct{}), done: make(chan struct{}), seeks: make(chan seekRequest, 1)}
 	p.state = State{Ready: true, Duration: float64(decoder.Len()) / float64(p.rate)}
 	p.context, err = malgo.InitContext(nil, malgo.ContextConfig{}, nil)
 	if err != nil {
@@ -223,6 +271,9 @@ func (p *Player) Pause() {
 	p.mu.Unlock()
 }
 func (p *Player) Seek(seconds float64) error {
+	if p.denySeek {
+		return ErrOnlineSeekNeedsCache
+	}
 	if math.IsNaN(seconds) || math.IsInf(seconds, 0) || seconds < 0 {
 		return errors.New("invalid seek")
 	}

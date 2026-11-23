@@ -17,6 +17,7 @@ import (
 	"tinglan/native/internal/audio"
 	"tinglan/native/internal/music"
 	"tinglan/native/internal/source"
+	"tinglan/native/internal/storage"
 	"tinglan/native/internal/webauth"
 )
 
@@ -47,46 +48,51 @@ type model struct {
 	applicationState
 	typeState
 	persistenceState
-	designLyrics       designLyricLoad
-	playAllPending     bool
-	audioRunning       bool
-	invalidator        app.Invalidator
-	mu                 sync.Mutex
-	pending            []completion
-	closed             bool
-	generation         uint64
-	cancel             context.CancelFunc
-	busy               bool
-	restoring          bool
-	status             string
-	session            *source.Session
-	sourceSessions     map[music.SourceID]*source.Session
-	sourceAuth         map[music.SourceID]source.AuthStatus
-	loginSaved         bool
-	signIn             func(context.Context) (*source.Session, error)
-	loginTarget        music.SourceID
-	player             *audio.Player
-	audioState         audio.State
-	playbackGeneration uint64
-	playbackCancel     context.CancelFunc
-	playbackResults    []playbackResult
-	resolving          bool
-	actualQuality      string
-	qualitySwitch      designQualitySwitch
-	resolvedDuration   float64
-	durationMismatch   bool
-	learnedDurationFor string
-	previewNoticed     bool
-	playFailures       int
-	pendingSeek        float64
-	resumeTrackID      string
-	resumePosition     float64
-	startedAt          time.Time
-	lastQueueSave      time.Time
-	listened           float64
-	lastPoll           time.Time
-	lastPosition       float64
-	historyReported    bool
+	designLyrics        designLyricLoad
+	playAllPending      bool
+	audioRunning        bool
+	invalidator         app.Invalidator
+	mu                  sync.Mutex
+	pending             []completion
+	closed              bool
+	generation          uint64
+	cancel              context.CancelFunc
+	busy                bool
+	restoring           bool
+	status              string
+	session             *source.Session
+	sourceSessions      map[music.SourceID]*source.Session
+	sourceAuth          map[music.SourceID]source.AuthStatus
+	loginSaved          bool
+	signIn              func(context.Context) (*source.Session, error)
+	loginTarget         music.SourceID
+	player              *audio.Player
+	audioState          audio.State
+	playbackGeneration  uint64
+	playbackCancel      context.CancelFunc
+	playbackResults     []playbackResult
+	resolving           bool
+	actualQuality       string
+	qualitySwitch       designQualitySwitch
+	audioCache          *storage.AudioCache
+	audioCacheCancel    context.CancelFunc
+	audioCacheDone      <-chan struct{}
+	activeAudioCacheKey string
+	cacheSeek           cacheSeekState
+	resolvedDuration    float64
+	durationMismatch    bool
+	learnedDurationFor  string
+	previewNoticed      bool
+	playFailures        int
+	pendingSeek         float64
+	resumeTrackID       string
+	resumePosition      float64
+	startedAt           time.Time
+	lastQueueSave       time.Time
+	listened            float64
+	lastPoll            time.Time
+	lastPosition        float64
+	historyReported     bool
 }
 
 func newModel() *model {
@@ -239,6 +245,7 @@ func (m *model) close() {
 		m.mediaController = nil
 	}
 	m.designLyrics.close()
+	m.stopAudioCache()
 	m.saveQueue()
 	m.cancelPlayback()
 	if m.playTimer != nil {

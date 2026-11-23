@@ -68,4 +68,6 @@ func (r *Reader) Seek(offset int64, whence int) (int64, error) {
 	r.position = next
 	return next, nil
 }
+func (r *Reader) Size() int64 { return r.total }
+
 func (r *Reader) Close() error { r.cancel(); return nil }

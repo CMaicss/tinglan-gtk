@@ -131,6 +131,7 @@ func (m *model) initDesktop() {
 func (m *model) openProfile(dir string) {
 	m.store = storage.New(dir)
 	m.settings, _ = m.store.LoadSettings()
+	m.initAudioCache()
 	if !m.demo {
 		m.openLocalLibrary()
 		if saved, err := m.store.LoadQueue(); err == nil && len(saved.Tracks) > 0 {
@@ -566,6 +567,9 @@ func (m *model) playListTrack(tracks []music.Track, index int) {
 	m.saveQueue()
 }
 func (m *model) playCurrent() {
+	m.cancelCachedSeek()
+	m.activeAudioCacheKey = ""
+	m.cancelAudioCache()
 	m.cancelQualitySwitch()
 	if m.qualitySwitch.track != m.qualityTrackKey() {
 		m.qualitySwitch.track, m.qualitySwitch.preferred = "", ""

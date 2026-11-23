@@ -52,6 +52,12 @@ def settings_mixin(d):
             _, play = groups['play']
             self.settings_combo(play, '关闭窗口时', 'close', ['退出程序', '隐藏窗口'])
             self.settings_combo(play, '默认音质', 'quality', ['标准', '无损'])
+            capacity = Adw.SpinRow.new_with_range(0, 16384, 128)
+            capacity.set_title('音频缓存上限（MiB）')
+            capacity.set_subtitle('已缓存 0 MiB · 0 为关闭')
+            capacity.connect('notify::value', lambda w, _: self.settings_pref('audio-cache', round(w.get_value())))
+            play.add(capacity)
+            self.settings_controls['audio-cache'] = capacity
             self.settings_combo(play, '播放模式', 'mode', ['顺序播放', '列表循环', '单曲循环', '随机播放'])
             self.settings_switch(play, '第三方歌词匹配', 'lyrics-match')
             self.settings_lyrics_actions = [
@@ -298,6 +304,11 @@ def settings_mixin(d):
                 for control, field in [('lyrics-match', 'ThirdPartyLyrics'), ('jev-enabled', 'JevEnabled')]:
                     self.settings_controls[control].set_active(bool(state.get(field)))
                 self.settings_controls['font-size'].set_value(state.get('FontSize', 100))
+                capacity = self.settings_controls['audio-cache']
+                limit = state.get('AudioCacheMiB', 1024)
+                used = state.get('AudioCacheBytes', 0) / (1024 * 1024)
+                capacity.set_value(limit)
+                capacity.set_subtitle(f'已缓存 {used:.1f} / {limit} MiB · 0 为关闭')
                 self.settings_font_row.set_subtitle(state.get('FontFamily') or '默认')
                 self.settings_style(state)
                 store = bool(state.get('StoreReady'))

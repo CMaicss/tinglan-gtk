@@ -11,7 +11,6 @@ import (
 	"regexp"
 	"strings"
 	"sync"
-
 )
 
 type Appearance struct {
@@ -41,6 +40,7 @@ type JevSettings struct {
 type Settings struct {
 	Appearance       Appearance      `json:"appearance"`
 	Volume           float64         `json:"volume"`
+	AudioCacheMiB    int             `json:"audioCacheMiB"`
 	Quality          string          `json:"quality"`
 	RepeatMode       string          `json:"repeatMode"`
 	Shuffle          bool            `json:"shuffle"`
@@ -55,8 +55,9 @@ func Defaults() Settings {
 	return Settings{
 		Appearance: Appearance{Accent: "red", PanelOpacity: 1, CornerRadius: 11, FontScale: 1},
 		Volume:     .85, Quality: "standard", RepeatMode: "off", CloseToTray: true, ThirdPartyLyrics: true,
-		Sources: []SourceSetting{{ID: "huawei", Enabled: true}},
-		Jev:     JevSettings{Endpoint: "https://api.typesafe.ai", Threshold: .80},
+		AudioCacheMiB: 1024,
+		Sources:       []SourceSetting{{ID: "huawei", Enabled: true}},
+		Jev:           JevSettings{Endpoint: "https://api.typesafe.ai", Threshold: .80},
 	}
 }
 func clamp(value, low, high, fallback float64) float64 {
@@ -66,6 +67,7 @@ func clamp(value, low, high, fallback float64) float64 {
 	return max(low, min(high, value))
 }
 func (s *Settings) Sanitize() {
+	s.AudioCacheMiB = max(0, min(MaxAudioCacheMiB, s.AudioCacheMiB))
 	switch s.Appearance.Theme {
 	case "midnight", "forest", "graphite", "ocean", "sage", "sand", "rose", "ice", "wine", "coffee", "obsidian":
 	default:

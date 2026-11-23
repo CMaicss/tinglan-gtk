@@ -26,6 +26,8 @@ type designPreferences struct {
 	SourceReady, SourceBusy, AccountBusy, StoreReady bool
 	Message, Status                                  string
 	CloseToTray, Lossless, ThirdPartyLyrics          bool
+	AudioCacheMiB                                    int
+	AudioCacheBytes                                  int64
 	Mode, FontSize, Theme                            int
 	FontFamily                                       string
 	LyricsTarget                                     string
@@ -124,10 +126,13 @@ func designSettingsState(m *model) any {
 		Sources: designSettingsRows(m), SourceReady: m.plugins != nil && m.registry != nil, SourceBusy: p.work != nil,
 		AccountBusy: m.busy || m.restoring || m.importing, StoreReady: m.store != nil && !m.demo,
 		Status: m.status, Message: p.message, CloseToTray: s.CloseToTray, Lossless: s.Quality == "lossless",
-		ThirdPartyLyrics: s.ThirdPartyLyrics, Mode: mode, FontSize: fontSize, Theme: theme,
+		AudioCacheMiB: s.AudioCacheMiB, ThirdPartyLyrics: s.ThirdPartyLyrics, Mode: mode, FontSize: fontSize, Theme: theme,
 		FontFamily: a.FontFamily, LyricStats: m.lyricStats,
 		JevEnabled: s.Jev.Enabled, JevEndpoint: s.Jev.Endpoint, JevModel: s.Jev.Model, JevTesting: m.jevTesting,
 		JevStatus: m.jevTestStatus, JevSaved: p.jevSaved,
+	}
+	if m.audioCache != nil {
+		snapshot.AudioCacheBytes = m.audioCache.UsageBytes()
 	}
 	if cur := m.queue.Current(); cur != nil {
 		snapshot.LyricsTarget = string(cur.Source) + ":" + cur.ID
@@ -344,6 +349,17 @@ func designSettingsCommand(m *model, c designCommand) bool {
 	switch c.Op {
 	case "settings-close":
 		m.settings.CloseToTray = c.Index == 1
+	case "settings-audio-cache":
+		if c.Index < 0 || c.Index > storage.MaxAudioCacheMiB {
+			return true
+		}
+		m.settings.AudioCacheMiB = c.Index
+		if c.Index == 0 {
+			m.cancelAudioCache()
+		}
+		if m.audioCache != nil {
+			m.audioCache.SetLimit(int64(c.Index) << 20)
+		}
 	case "settings-quality":
 		if c.Index == 1 {
 			m.settings.Quality = "lossless"

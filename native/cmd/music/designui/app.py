@@ -273,7 +273,14 @@ class Preview:
         return Gtk.MenuButton(icon_name='open-menu-symbolic', tooltip_text='主菜单', menu_model=model, css_classes=['flat'])
 
     def about(self):
-        self.about_dialog = Adw.AboutDialog(application_name='听澜', comments='GTK4 / libadwaita', license_type=Gtk.License.AGPL_3_0)
+        self.about_dialog = Adw.AboutDialog(
+            application_name='听澜',
+            application_icon='tinglan-about-logo',
+            developer_name='Maicss',
+            comments='支持音源插件的 Linux 桌面音乐播放器，使用 Go、GTK4 和 libadwaita 构建。',
+            license_type=Gtk.License.AGPL_3_0,
+        )
+        self.about_dialog.add_link('Fork 自 talongao/tinglan', 'https://github.com/talongao/tinglan')
         self.about_dialog.present(self.win)
 
     def nav_row(self, key):
