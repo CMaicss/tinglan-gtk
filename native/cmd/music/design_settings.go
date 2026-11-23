@@ -400,6 +400,7 @@ func designSettingsCommand(m *model, c designCommand) bool {
 			m.setStatus("歌词清理失败：" + err.Error())
 			return true
 		}
+		m.designLyrics.invalidate()
 		m.lyricStats = m.store.LyricsInfo()
 		if local && m.lyricSource == "本地导入" {
 			m.lyricLines, m.lyricSource = nil, ""
@@ -420,6 +421,7 @@ func designSettingsCommand(m *model, c designCommand) bool {
 				m.setStatus("移除歌词失败")
 				return true
 			}
+			m.designLyrics.invalidate()
 			m.lyricLines, m.lyricSource = nil, ""
 			if doc, err := m.store.LoadLyrics(key); err == nil {
 				m.lyricLines, m.lyricSource = doc.Lines, doc.Source

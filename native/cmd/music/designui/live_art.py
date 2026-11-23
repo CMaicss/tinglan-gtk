@@ -293,8 +293,9 @@ def art_mixin(d):
         def _art_timeline(self):
             self._art_init()
             lines = self.state.get('Lyrics') or ()
-            old, self._art_lyrics = self._art_lyrics, lines
-            if lines is old or lines == old:
+            phase = self.state.get('LyricPhase')
+            old, self._art_lyrics = self._art_lyrics, (phase, lines)
+            if self._art_lyrics == old:
                 return
             labels, cues = [], []
             for line in lines:
@@ -305,7 +306,8 @@ def art_mixin(d):
                     labels.append('\n'.join(filter(None, (text, line.get('translation'), line.get('romanization')))))
                 if line.get('time', -1) >= 0:
                     cues.append((line['time'], row))
-            self._art_labels = labels or ['暂无歌词']
+            empty = '正在加载歌词…' if phase in ('cache', 'idle', 'online') else '暂无歌词'
+            self._art_labels = labels or [empty]
             self._art_cues = sorted(cues, key=lambda cue: cue[0])
 
         def art_follow_lyric(self, active):

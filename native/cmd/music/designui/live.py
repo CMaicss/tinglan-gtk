@@ -177,6 +177,23 @@ def Live(app, args, preview):
         def remove_queue(self, index): self.play_action('queue-remove', 'Queue', index)
         def play_all(self): self.play_action('play-favorites', 'Favorites', 0)
         def set_mode(self, mode): self.send('mode', Index=('顺序播放','列表循环','单曲循环','随机播放').index(mode))
+        def open(self, key):
+            previous = getattr(self, 'view', None)
+            result = super().open(key)
+            if key != 'lyrics' or previous != 'lyrics':
+                self._lyrics_requested = None
+            self.request_visible_lyrics()
+            return result
+
+        def request_visible_lyrics(self):
+            if self.view != 'lyrics' or not hasattr(self, 'backend'):
+                return
+            token = (self.state.get('Art') or {}).get('LyricToken')
+            if (token and self.state.get('LyricPhase') in ('cache', 'idle')
+                    and token != getattr(self, '_lyrics_requested', None)):
+                self._lyrics_requested = token
+                self.send('lyrics-open', ID=token)
+
         def lyric_lines(self): return self.art_lyric_lines()
         def lyric_current(self): return self.art_lyric_current()
 
@@ -279,7 +296,9 @@ def Live(app, args, preview):
                 (row.add_css_class if row.track==self.current else row.remove_css_class)('current')
             self.art_apply(state)
             if self.view == 'lyrics':
-                if last != self.current or state.get('Lyrics') != old.get('Lyrics'):
+                self.request_visible_lyrics()
+                if (last != self.current or state.get('Lyrics') != old.get('Lyrics')
+                        or state.get('LyricPhase') != old.get('LyricPhase')):
                     self.lyrics()
                 elif hasattr(self,'stage_text'):
                     child = self.stage_text.get_first_child()

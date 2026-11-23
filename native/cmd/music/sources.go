@@ -584,12 +584,15 @@ func (m *model) storedLyricOffset(track music.Track) float64 {
 	if m.store == nil {
 		return 0
 	}
-	exact := m.trackOffsetKey(track)
-	if value, ok := m.store.LyricOffsetSaved(exact); ok {
+	return loadLyricOffset(m.store, m.trackOffsetKey(track))
+}
+
+func loadLyricOffset(store *storage.Store, exact string) float64 {
+	if value, ok := store.LyricOffsetSaved(exact); ok {
 		return value
 	}
 	if at := strings.IndexByte(exact, '|'); at > 0 {
-		return m.store.LyricOffset(exact[:at])
+		return store.LyricOffset(exact[:at])
 	}
 	return 0
 }

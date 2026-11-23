@@ -47,6 +47,7 @@ type model struct {
 	applicationState
 	typeState
 	persistenceState
+	designLyrics       designLyricLoad
 	playAllPending     bool
 	audioRunning       bool
 	invalidator        app.Invalidator
@@ -236,6 +237,7 @@ func (m *model) close() {
 		m.mediaController.Close()
 		m.mediaController = nil
 	}
+	m.designLyrics.close()
 	m.saveQueue()
 	m.cancelPlayback()
 	if m.playTimer != nil {
