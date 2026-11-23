@@ -192,7 +192,7 @@ func MusicTrack(track Track) music.Track {
 	}
 	return music.Track{
 		Source: music.SourceHuawei, ID: track.ID, Title: track.Title, Artists: artists,
-		Album: album, CoverURL: track.CoverURL, Duration: track.Duration, Version: version,
+		Album: album, CoverURL: track.CoverURL, CoverURLs: track.CoverURLs, Duration: track.Duration, Version: version,
 	}
 }
 

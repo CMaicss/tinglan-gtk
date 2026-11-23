@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"image"
 	imagecolor "image/color"
@@ -14,6 +15,115 @@ import (
 	"tinglan/native/internal/music"
 	"tinglan/native/internal/storage"
 )
+
+func TestDesignStageUpgradesFromAlbumOnlyWhenTrackIsTooSmall(t *testing.T) {
+	fixture := func(n int) []byte {
+		var buf bytes.Buffer
+		if err := png.Encode(&buf, image.NewNRGBA(image.Rect(0, 0, n, n))); err != nil {
+			t.Fatal(err)
+		}
+		return buf.Bytes()
+	}
+	for _, width := range []int{160, 720} {
+		cache := storage.New(t.TempDir())
+		track, cover := fixture(width), fixture(1000)
+		calls := 0
+		fetch := func(_ context.Context, key string) ([]byte, error) {
+			if key == "track" {
+				return track, nil
+			}
+			return cover, nil
+		}
+		album := func(context.Context) string { calls++; return "detail" }
+		payload := designStageLoad(context.Background(), cache, []string{"track"}, fetch, album, "album:huawei:test")
+		cfg, _, err := image.DecodeConfig(bytes.NewReader(payload))
+		want, wantCalls := 720, 0
+		if width == 160 {
+			want, wantCalls = designStageSide, 1
+		}
+		if err != nil || cfg.Width != want || calls != wantCalls {
+			t.Fatalf("track=%d: got width=%d, album calls=%d, err=%v", width, cfg.Width, calls, err)
+		}
+		offline := designStageLoad(context.Background(), cache, []string{"track"}, nil, nil, "album:huawei:test")
+		if !bytes.Equal(offline, payload) {
+			t.Fatal("stage artwork was not reusable offline")
+		}
+	}
+}
+
+func TestDesignStageRevalidatesSmallImageAtSameURL(t *testing.T) {
+	cache := storage.New(t.TempDir())
+	const raw = "https://covers.dbankcdn.cn/fixture.png"
+	fixture := func(n int) []byte {
+		var out bytes.Buffer
+		if err := png.Encode(&out, image.NewNRGBA(image.Rect(0, 0, n, n))); err != nil {
+			t.Fatal(err)
+		}
+		return out.Bytes()
+	}
+	if err := cache.SaveCover(raw, fixture(180)); err != nil {
+		t.Fatal(err)
+	}
+	large := fixture(640)
+	calls := 0
+	fetch := func(_ context.Context, key string) ([]byte, error) {
+		if key != raw {
+			t.Fatalf("unexpected URL %s", key)
+		}
+		calls++
+		return large, nil
+	}
+	for range 2 {
+		data := designStageLoad(context.Background(), cache, []string{raw}, fetch, nil, "")
+		cfg, _, err := image.DecodeConfig(bytes.NewReader(data))
+		if err != nil || cfg.Width != 640 {
+			t.Fatalf("width=%d, err=%v", cfg.Width, err)
+		}
+	}
+	if calls != 1 {
+		t.Fatalf("expected one revalidation, got %d", calls)
+	}
+}
+
+func TestDesignStageDoesNotReuseThumbnailPixels(t *testing.T) {
+	m := newModel()
+	defer m.close()
+	defer designArtClose(m)
+	m.store, m.demo = storage.New(t.TempDir()), true
+	raw := "https://covers.dbankcdn.cn/fixture.png"
+	m.queue.Replace([]music.Track{{ID: "fixture", Title: "Fixture", Source: "huawei", CoverURL: raw}}, 0)
+	for i, cache := range []*storage.Store{m.store, designStageStore(m.store)} {
+		width := []int{192, 640}[i]
+		var data bytes.Buffer
+		if err := png.Encode(&data, image.NewNRGBA(image.Rect(0, 0, width, width))); err != nil {
+			t.Fatal(err)
+		}
+		if err := cache.SaveCover(raw, data.Bytes()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, req := range []struct {
+		field string
+		width int
+	}{{"Queue", 192}, {"Stage", 640}} {
+		designArtCommand(m, designCommand{Op: "art", Text: req.field, ID: "huawei:fixture", Index: 0})
+		until := time.Now().Add(2 * time.Second)
+		for {
+			r := designArtState(m).(designArtView).Reply
+			if r != nil {
+				cfg, _, err := image.DecodeConfig(bytes.NewReader(r.PNG))
+				if err != nil || cfg.Width != req.width {
+					t.Fatalf("%s: width=%d, error=%v", req.field, cfg.Width, err)
+				}
+				break
+			}
+			if time.Now().After(until) {
+				t.Fatal("cover did not complete")
+			}
+			time.Sleep(time.Millisecond)
+		}
+	}
+}
 
 func TestDesignArtDeliveryFromProfileCache(t *testing.T) {
 	m := newModel()

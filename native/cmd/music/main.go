@@ -72,6 +72,7 @@ type model struct {
 	playbackResults    []playbackResult
 	resolving          bool
 	actualQuality      string
+	qualitySwitch      designQualitySwitch
 	resolvedDuration   float64
 	durationMismatch   bool
 	learnedDurationFor string

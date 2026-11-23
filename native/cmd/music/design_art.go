@@ -96,7 +96,13 @@ func designArtCommand(m *model, c designCommand) bool {
 		}
 		reply := &designArtReply{Field: c.Text, ID: c.ID, Index: c.Index}
 		urls := designArtURLs(m, c)
-		if len(urls) == 0 {
+		stage := c.Text == "Stage"
+		var album func(context.Context) string
+		var albumKey string
+		if stage && c.Index == m.queue.Index && c.ID == m.qualityTrackKey() {
+			album, albumKey = designStageAlbum(m, c.Index)
+		}
+		if len(urls) == 0 && album == nil {
 			s.reply = reply
 			return true
 		}
@@ -104,6 +110,13 @@ func designArtCommand(m *model, c designCommand) bool {
 		done := make(chan []byte, 1)
 		s.result, s.cancel, s.request, s.epoch, s.urls = done, cancel, c, m.accountEpoch, urls
 		client, store, offline := m.resourceClient, m.store, m.demo
+		if stage {
+			go func() {
+				defer cancel()
+				done <- designStageLoad(ctx, designStageStore(store), urls, designStageNetwork(client, offline), album, albumKey)
+			}()
+			return true
+		}
 		var cached ui.Bitmap
 		for _, raw := range urls {
 			if b := m.covers[raw]; b.Width > 0 {
@@ -148,14 +161,14 @@ func designArtState(m *model) any {
 		v.LyricFeedback = s.feedback
 	}
 	if s.result != nil {
-		if s.epoch != m.accountEpoch {
+		if s.epoch != m.accountEpoch || (s.request.Text == "Stage" && (s.request.Index != m.queue.Index || s.request.ID != m.qualityTrackKey())) {
 			s.cancel()
 		}
 		select {
 		case data := <-s.result:
 			c := s.request
 			currentURLs := designArtURLs(m, c)
-			if s.clear || s.epoch != m.accountEpoch || !slices.Equal(s.urls, currentURLs) {
+			if s.clear || s.epoch != m.accountEpoch || !slices.Equal(s.urls, currentURLs) || (c.Text == "Stage" && (c.Index != m.queue.Index || c.ID != m.qualityTrackKey())) {
 				data = nil
 			}
 			s.reply = &designArtReply{Field: c.Text, ID: c.ID, Index: c.Index, PNG: data}
@@ -168,7 +181,7 @@ func designArtState(m *model) any {
 		s.clear, s.reply = false, nil
 		s.revision++
 		m.covers, m.stageCovers, m.coverUsed, m.coverRetry = nil, nil, nil, nil
-		if err := m.store.ClearCovers(); err != nil {
+		if err := clearDesignArt(m.store); err != nil {
 			m.setStatus("封面缓存未能全部清除")
 		} else {
 			m.setStatus("封面缓存已清除")
@@ -190,6 +203,11 @@ func designArtURLs(m *model, c designCommand) []string {
 		rows = m.filtered
 	case "History":
 		rows = m.localHistory
+	case "Stage":
+		if c.Index != m.queue.Index || c.ID != m.qualityTrackKey() {
+			return nil
+		}
+		rows = m.queue.Tracks
 	case "Queue":
 		rows = m.queue.Tracks
 	case "Detail":

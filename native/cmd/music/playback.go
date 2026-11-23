@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log"
 	"math"
+	"runtime"
 	"time"
 
 	"tinglan/native/internal/audio"
@@ -25,14 +26,16 @@ type cachedResolve struct {
 }
 
 type playbackResult struct {
-	generation  uint64
-	player      *audio.Player
-	playback    music.Playback
-	link        music.SourceLink
-	lyrics      []lyrics.Line
-	lyricSource string
-	err         error
-	lyricsOnly  bool
+	generation    uint64
+	player        *audio.Player
+	playback      music.Playback
+	link          music.SourceLink
+	lyrics        []lyrics.Line
+	lyricSource   string
+	err           error
+	lyricsOnly    bool
+	qualitySwitch bool
+	switchRequest uint64
 }
 
 func lyricsCacheKey(link music.SourceLink) string {
@@ -52,7 +55,7 @@ func (m *model) resolveCurrent() {
 	ctx, cancel := context.WithCancel(context.Background())
 	m.playbackCancel = cancel
 	m.resolving = true
-	quality := m.settings.Quality
+	quality := m.requestedQuality()
 	store := m.store
 	fallbackEnabled := m.settings.ThirdPartyLyrics
 	query := lyrics.Query{Title: track.Title, Artist: track.ArtistText()}
@@ -87,7 +90,7 @@ func (m *model) resolveCurrent() {
 			r.playback = resolved.Playback
 			r.link = resolved.Link
 			if r.err == nil {
-				r.player, r.err = openRemote(ctx, r.playback.URL)
+				r.player, r.playback.Quality, r.err = openRemote(ctx, r.playback.URL)
 			}
 		}
 		if r.err != nil {
@@ -170,10 +173,15 @@ func (m *model) sourceLyrics(ctx context.Context, link music.SourceLink) ([]lyri
 // AVPlayer item on it. AVFoundation only reports readiness for items created on
 // a thread with a running run loop; a worker-created item stays at status
 // unknown with a zero duration and the player bar never leaves 0:00.
-func openRemote(ctx context.Context, url string) (*audio.Player, error) {
+func openRemote(ctx context.Context, url string) (*audio.Player, string, error) {
 	probe, err := audio.ProbeRemote(ctx, url)
 	if err != nil {
-		return nil, err
+		return nil, "", err
+	}
+	quality := probe.Quality()
+	if runtime.GOOS == "linux" {
+		p, err := audio.OpenRemote(ctx, url)
+		return p, quality, err
 	}
 	type opened struct {
 		player *audio.Player
@@ -186,14 +194,15 @@ func openRemote(ctx context.Context, url string) (*audio.Player, error) {
 	})
 	select {
 	case o := <-result:
-		return o.player, o.err
+		return o.player, quality, o.err
 	case <-ctx.Done():
-		return nil, ctx.Err()
+		return nil, "", ctx.Err()
 	case <-time.After(5 * time.Second):
 		// The main queue is not being serviced (headless tests); fall back to
 		// creating the item here so the failure surfaces as a playback error
 		// instead of blocking the resolver.
-		return probe.Open()
+		p, err := probe.Open()
+		return p, quality, err
 	}
 }
 
@@ -238,6 +247,10 @@ func (m *model) applyPlaybackResults() {
 			}
 			continue
 		}
+		if r.qualitySwitch {
+			m.applyQualityResult(r)
+			continue
+		}
 		if r.lyricsOnly {
 			// A local import made while a provider request was in flight wins.
 			if m.lyricSource != "本地导入" {
@@ -248,6 +261,8 @@ func (m *model) applyPlaybackResults() {
 			continue
 		}
 		m.resolving = false
+		afterLoad := m.qualitySwitch.afterLoad
+		m.qualitySwitch.afterLoad = false
 		if r.err != nil {
 			if m.expireSession(r.err) {
 				continue
@@ -293,10 +308,15 @@ func (m *model) applyPlaybackResults() {
 		m.startedAt = time.Now()
 		m.announceAccess(r)
 		m.pollAudio()
+		if afterLoad && r.generation == m.playbackGeneration {
+			m.switchDesignQuality(m.qualityTrackKey(), m.requestedQuality())
+		}
 	}
 }
 
 func (m *model) cancelPlayback() {
+	m.cancelQualitySwitch()
+	m.qualitySwitch.track, m.qualitySwitch.preferred = "", ""
 	m.playbackGeneration++
 	m.resolving = false
 	m.pendingSeek = 0

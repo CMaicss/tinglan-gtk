@@ -10,9 +10,9 @@ gi.require_version('Adw', '1')
 from gi.repository import Gtk, Gdk, GLib
 
 
-def png_fixture():
-    pixel = GLib.Bytes.new(bytes((255, 0, 0, 255)))
-    texture = Gdk.MemoryTexture.new(1, 1, Gdk.MemoryFormat.R8G8B8A8, pixel, 4)
+def png_fixture(side=1):
+    pixel = GLib.Bytes.new(bytes((255, 0, 0, 255)) * side * side)
+    texture = Gdk.MemoryTexture.new(side, side, Gdk.MemoryFormat.R8G8B8A8, pixel, 4 * side)
     return base64.b64encode(texture.save_to_png_bytes().get_data()).decode('ascii')
 
 
@@ -78,6 +78,44 @@ class DesignArtDeliveryTest(unittest.TestCase):
         self.assertIsNone(art.get_last_child().get_paintable())
 
 
+    def test_stage_upgrades_existing_thumb_without_replacing_list_texture(self):
+        ui, sent = self.make_ui()
+        ui.current = 4
+        ui.indexes['Queue'] = [4]
+        state = {'Current': 0, 'Queue': [{'ID': 's:one'}], 'Art': {'Epoch': 1}}
+        row = Gtk.Box()
+        thumb = ui.art_build(4, 40)
+        row.append(thumb)
+        ui.win.set_child(row)
+        ui.win.present()
+        flush()
+        ui.art_apply(state)
+        state['Art']['Reply'] = {'ID': 's:one', 'Field': 'Queue', 'Index': 0, 'PNG': png_fixture(12)}
+        ui.art_apply(state)
+        stage = ui.art_build(('Stage', 4), 136)
+        row.append(stage)
+        flush()
+        ui.art_apply(state)
+        self.assertEqual(stage.get_last_child().get_paintable().get_width(), 12)
+        self.assertEqual(sent[-1], ('art', {'ID': 's:one', 'Text': 'Stage', 'Index': 0}))
+        state['Art']['Reply'] = {'ID': 's:one', 'Field': 'Stage', 'Index': 0, 'PNG': png_fixture(180)}
+        ui.art_apply(state)
+        self.assertEqual(stage.get_last_child().get_paintable().get_width(), 180)
+        attempts = len(sent)
+        state['Art'].pop('Reply')
+        ui.art_apply(state)
+        self.assertEqual(len(sent), attempts)
+        key = ui._art_key(('Stage', 0, 's:one'))
+        texture, _ = ui._art_textures[key]
+        ui._art_textures[key] = (texture, -1000)
+        ui.art_apply(state)
+        self.assertEqual(len(sent), attempts + 1)
+        self.assertIs(stage.get_last_child().get_paintable(), texture)
+        state['Art']['Reply'] = {'ID': 's:one', 'Field': 'Stage', 'Index': 0, 'PNG': png_fixture(640)}
+        ui.art_apply(state)
+        self.assertEqual(stage.get_last_child().get_paintable().get_width(), 640)
+        self.assertEqual(thumb.get_last_child().get_paintable().get_width(), 12)
+
     def test_scrolled_out_art_only_requests_after_entering_viewport(self):
         ui, sent = self.make_ui()
         scroll = Gtk.ScrolledWindow()
@@ -125,9 +163,22 @@ class DesignArtDeliveryTest(unittest.TestCase):
         flush()
         adj = ui.stage_scroll.get_vadjustment()
         self.assertEqual(adj.get_value(), 0)
+        # Test centering without depending on Wayland animation frame delivery.
+        settings = ui.stage_scroll.get_settings()
+        previous = settings.get_property('gtk-enable-animations')
+        self.addCleanup(settings.set_property, 'gtk-enable-animations', previous)
+        settings.set_property('gtk-enable-animations', False)
         ui.art_follow_lyric(20)
         loop = GLib.MainLoop()
-        GLib.timeout_add(450, lambda: (loop.quit(), False)[1])
+        deadline = GLib.get_monotonic_time() + 2_000_000
+
+        def wait_for_scroll():
+            if adj.get_value() > 500 or GLib.get_monotonic_time() >= deadline:
+                loop.quit()
+                return False
+            return True
+
+        GLib.timeout_add(16, wait_for_scroll)
         loop.run()
         self.assertGreater(adj.get_value(), 500)
         self.assertIs(ui.stage_lines[20].get_parent(), ui.stage_text)

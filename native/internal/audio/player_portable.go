@@ -3,6 +3,7 @@
 package audio
 
 import (
+	"bufio"
 	"context"
 	"encoding/binary"
 	"errors"
@@ -62,6 +63,30 @@ func OpenLocalFixture(path string) (*Player, error) {
 	}
 	return openPortable(f)
 }
+
+// FLAC parsing makes many tiny reads. Keep those in memory while preserving
+// the logical offset observed by the decoder when building its seek table.
+type bufferedAudioSource struct {
+	io.ReadSeekCloser
+	reader *bufio.Reader
+}
+
+func (s *bufferedAudioSource) Read(p []byte) (int, error) { return s.reader.Read(p) }
+func (s *bufferedAudioSource) Seek(offset int64, whence int) (int64, error) {
+	if whence == io.SeekCurrent {
+		offset -= int64(s.reader.Buffered())
+		if offset == -int64(s.reader.Buffered()) {
+			pos, err := s.ReadSeekCloser.Seek(0, io.SeekCurrent)
+			return pos + offset, err
+		}
+	}
+	pos, err := s.ReadSeekCloser.Seek(offset, whence)
+	if err == nil {
+		s.reader.Reset(s.ReadSeekCloser)
+	}
+	return pos, err
+}
+
 func openPortable(source io.ReadSeekCloser) (*Player, error) {
 	var magic [4]byte
 	if _, err := io.ReadFull(source, magic[:]); err != nil {
@@ -73,7 +98,7 @@ func openPortable(source io.ReadSeekCloser) (*Player, error) {
 	var format beep.Format
 	var err error
 	if string(magic[:]) == "fLaC" {
-		decoder, format, err = flac.Decode(source)
+		decoder, format, err = flac.Decode(&bufferedAudioSource{ReadSeekCloser: source, reader: bufio.NewReaderSize(source, 32768)})
 	} else if string(magic[:3]) == "ID3" || (magic[0] == 0xff && magic[1]&0xe0 == 0xe0) {
 		decoder, format, err = mp3.Decode(source)
 	} else {

@@ -566,6 +566,10 @@ func (m *model) playListTrack(tracks []music.Track, index int) {
 	m.saveQueue()
 }
 func (m *model) playCurrent() {
+	m.cancelQualitySwitch()
+	if m.qualitySwitch.track != m.qualityTrackKey() {
+		m.qualitySwitch.track, m.qualitySwitch.preferred = "", ""
+	}
 	track := m.queue.Current()
 	if track == nil {
 		return

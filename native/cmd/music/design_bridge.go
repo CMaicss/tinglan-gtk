@@ -25,6 +25,9 @@ type designState struct {
 	Collections, Settings, Art                                 any
 	Lyrics                                                     []lyrics.Line
 	LyricPhase                                                 string
+	QualityRequested, QualityActual, QualityNotice             string
+	QualitySwitching                                           bool
+	QualityNoticeSerial                                        uint64
 	Favorites, Results, History, Queue, Detail                 []designTrack
 	Playlists                                                  []designPlaylist
 	Sources                                                    []string
@@ -56,6 +59,11 @@ func designSnapshotWithWindow(m *model, quit bool) designState {
 	phase := m.updateDesignLyrics("")
 	collections, settings, art := designCollectionState(m), designSettingsState(m), designArtState(m)
 	s := designState{Collections: collections, Settings: settings, Art: art, Favorites: designTracks(m.tracks), Results: designTracks(m.filtered), History: designTracks(m.localHistory), Queue: designTracks(m.queue.Tracks), Detail: designTracks(m.localTracks), Current: -1, Position: m.audioState.Position, Duration: m.audioState.Duration, Volume: m.settings.Volume, Playing: m.audioState.Playing, SignedIn: m.session != nil, Restoring: m.restoring, Searching: m.searchLoading, More: m.searchMore, SearchError: m.searchError, Status: m.status}
+	s.QualityRequested, s.QualitySwitching = m.requestedQuality(), m.qualitySwitch.cancel != nil
+	if m.player != nil {
+		s.QualityActual = m.actualQuality
+	}
+	s.QualityNotice, s.QualityNoticeSerial = m.qualitySwitch.notice, m.qualitySwitch.serial
 	s.Lyrics, s.LyricPhase = m.lyricLines, phase
 	s.Raise, s.Quit = m.reopen.Swap(false), quit
 	if m.queue.Current() != nil {
@@ -85,6 +93,8 @@ func runDesignCommand(m *model, c designCommand) {
 		return c.ID == string(t.Source)+":"+t.ID && (c.Op == "queue-remove" || m.trackAvailable(t))
 	}
 	switch c.Op {
+	case "quality-switch":
+		m.switchDesignQuality(c.ID, c.Text)
 	case "lyrics-open":
 		if c.ID != "" {
 			m.updateDesignLyrics(c.ID)

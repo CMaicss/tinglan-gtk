@@ -54,6 +54,13 @@ func ProbeRemote(ctx context.Context, url string) (*RemoteProbe, error) {
 	return &RemoteProbe{client: client, url: url, total: probe.Total, kind: kind}, nil
 }
 
+func (r *RemoteProbe) Quality() string {
+	if r.kind == "org.xiph.flac" {
+		return "lossless"
+	}
+	return "standard"
+}
+
 // Open builds the AVPlayer item. AVFoundation only reports progress when the
 // item is created on a thread with a running run loop (the application main
 // thread); creating it on a worker goroutine leaves the item stuck at

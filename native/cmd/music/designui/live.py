@@ -143,6 +143,9 @@ def Live(app, args, preview):
         def art(self, n, size, rounded=False):
             return self.art_build(n, size, rounded)
 
+        def stage_art(self, n, size):
+            return self.art_build(("Stage", n), size)
+
         def playlist_art(self, n):
             return self.art_playlist(n)
 
@@ -193,6 +196,64 @@ def Live(app, args, preview):
                     and token != getattr(self, '_lyrics_requested', None)):
                 self._lyrics_requested = token
                 self.send('lyrics-open', ID=token)
+
+        def quality_entries(self):
+            return [("标准", lambda: self.select_quality("standard")),
+                    ("无损", lambda: self.select_quality("lossless"))]
+
+        def compact_quality_entries(self):
+            return [("音质 · " + label, action) for label, action in self.quality_entries()]
+
+        def select_quality(self, tier):
+            queue = self.state.get("Queue") or ()
+            index = self.state.get("Current", -1)
+            if 0 <= index < len(queue):
+                self.send("quality-switch", ID=queue[index]["ID"], Text=tier)
+
+        def append_stage_metadata(self, artwork):
+            album = d.TRACKS[self.current][2]
+            if album:
+                album_label = d.label(album, "dim-label")
+                album_label.set_halign(Gtk.Align.CENTER)
+                artwork.append(album_label)
+            # Measure the fixed-size slot, not the picture: Gtk.Picture's
+            # aspect-ratio measurement can grow to the width of the artwork.
+            badge = Gtk.Overlay()
+            slot = Gtk.Box()
+            slot.set_size_request(44, 18)
+            badge.set_child(slot)
+            picture = Gtk.Picture.new_for_filename(str(d.asset("icons/flac-badge.svg")))
+            picture.set_content_fit(Gtk.ContentFit.CONTAIN)
+            badge.add_overlay(picture)
+            badge.set_measure_overlay(picture, False)
+            badge.set_halign(Gtk.Align.CENTER)
+            badge.set_valign(Gtk.Align.CENTER)
+            badge.update_property([Gtk.AccessibleProperty.LABEL], ["FLAC"])
+            badge.set_visible(self.state.get("QualityActual") == "lossless")
+            artwork.append(badge)
+            self.stage_flac_badge = badge
+
+        def update_quality(self, state, old):
+            if badge := getattr(self, "stage_flac_badge", None):
+                badge.set_visible(state.get("QualityActual") == "lossless")
+            labels = {"standard": "标准（MP3）", "lossless": "无损（FLAC）"}
+            actual = labels.get(state.get("QualityActual"), "未确认")
+            wanted = labels.get(state.get("QualityRequested"), "标准")
+            text = f"请求：{wanted} · 当前：{actual}"
+            if state.get("QualitySwitching"):
+                text += " · 正在切换…"
+            self.quality_button.set_tooltip_text(text)
+            self.more.set_tooltip_text("播放选项 · " + text)
+            self.quality_button.set_sensitive(state.get("Current", -1) >= 0)
+            if state.get("QualityNoticeSerial") != old.get("QualityNoticeSerial") and state.get("QualityNotice"):
+                overlay = getattr(self, "_collection_toast_overlay", None)
+                if overlay is None:
+                    overlay = Adw.ToastOverlay()
+                    self.win.set_content(None)
+                    overlay.set_child(self.root)
+                    self.win.set_content(overlay)
+                    self._collection_toast_overlay = overlay
+                overlay.add_toast(Adw.Toast(title=state["QualityNotice"], timeout=3))
 
         def lyric_lines(self): return self.art_lyric_lines()
         def lyric_current(self): return self.art_lyric_current()
@@ -275,6 +336,7 @@ def Live(app, args, preview):
                 self.waiting_detail = False
                 self.detail(self.detail_name, self.indexes['Detail'])
             self.settings_apply(state)
+            self.update_quality(state, old)
             last = self.current
             self.queue = self.indexes.get('Queue', [])
             self.current = self.queue[state['Current']] if 0 <= state['Current'] < len(self.queue) else None

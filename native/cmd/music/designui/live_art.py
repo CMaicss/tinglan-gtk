@@ -15,7 +15,9 @@ from weakref import WeakSet
 _SCAN = 96
 _CACHE = 96
 _RETRY = 15
-_MAX_PNG_WIRE = 220_000  # 192×192 RGBA PNG, base64 encoded
+_STAGE_RETRY = 60
+_STAGE_ENOUGH = 640
+_MAX_PNG_WIRE = 350_000  # bounded 256 KiB cover payload, base64 encoded
 _TRACK_FIELDS = ('Queue', 'Favorites', 'Results', 'History', 'Detail')
 
 
@@ -132,7 +134,11 @@ def art_mixin(d):
         def _art_ref(self, n, state):
             if isinstance(n, tuple):
                 field, index = n
-                rows = state.get(field) or ()
+                if field == 'Stage':
+                    if index != self.current:
+                        return None
+                    index = state.get('Current', -1)
+                rows = state.get('Queue' if field == 'Stage' else field) or ()
                 return (field, index, rows[index]['ID']) if 0 <= index < len(rows) else None
             # Prefer the exact current queue entry for player/stage covers.
             i = state.get('Current', -1)
@@ -145,7 +151,7 @@ def art_mixin(d):
 
         @staticmethod
         def _art_key(ref):
-            return (ref[0] == 'Playlists', ref[2])
+            return ('Stage' if ref[0] == 'Stage' else ref[0] == 'Playlists', ref[2])
 
         def art_apply(self, state):
             self._art_init()
@@ -174,10 +180,16 @@ def art_mixin(d):
                 ref = (reply.get('Field'), reply.get('Index'), reply.get('ID'))
                 if self._art_request == ref:
                     self._art_request = None
-                    rows = state.get(ref[0]) or ()
-                    if 0 <= ref[1] < len(rows) and rows[ref[1]]['ID'] == ref[2]:
+                    rows = state.get('Queue' if ref[0] == 'Stage' else ref[0]) or ()
+                    if (0 <= ref[1] < len(rows) and rows[ref[1]]['ID'] == ref[2]
+                            and (ref[0] != 'Stage' or ref[1] == state.get('Current'))):
                         key = self._art_key(ref)
-                        self._art_textures[key] = (self._art_texture(reply.get('PNG')), now)
+                        texture = self._art_texture(reply.get('PNG'))
+                        if ref[0] == 'Stage':
+                            previous, _ = self._art_textures.get(key, (None, 0))
+                            if previous is not None and (texture is None or previous.get_width() > texture.get_width()):
+                                texture = previous
+                        self._art_textures[key] = (texture, now)
                         self._art_textures.move_to_end(key)
                         while len(self._art_textures) > _CACHE:
                             old, _ = self._art_textures.popitem(last=False)
@@ -203,6 +215,8 @@ def art_mixin(d):
                     batch.append(widget)
             if player in self._art_mapped:
                 batch.insert(0, player)
+            batch.sort(key=lambda widget: not (isinstance(self._art_mapped[widget][0], tuple)
+                                               and self._art_mapped[widget][0][0] == 'Stage'))
             for widget in batch:
                 n, _, _ = self._art_mapped[widget]
                 ref = self._art_ref(n, state) if self._art_visible(widget) else None
@@ -211,13 +225,26 @@ def art_mixin(d):
                     continue
                 key = self._art_key(ref)
                 cached = self._art_textures.get(key)
+                if ref[0] == 'Stage':
+                    thumb_key = (False, ref[2])
+                    thumb, _ = self._art_textures.get(thumb_key, (None, 0))
+                    texture = cached[0] if cached is not None else None
+                    if thumb is not None and (texture is None or thumb.get_width() > texture.get_width()):
+                        self._art_paint(widget, thumb, thumb_key)
+                    else:
+                        self._art_paint(widget, texture, key)
                 if cached is not None:
                     texture, seen = cached
-                    self._art_paint(widget, texture, key)
-                    if texture is not None or now - seen < _RETRY:
+                    if ref[0] != 'Stage':
+                        self._art_paint(widget, texture, key)
+                    if ref[0] == 'Stage':
+                        settled = (texture is not None and texture.get_width() >= _STAGE_ENOUGH) or now - seen < _STAGE_RETRY
+                    else:
+                        settled = texture is not None or now - seen < _RETRY
+                    if settled:
                         self._art_textures.move_to_end(key)
                         continue
-                elif widget in self._art_shown:
+                elif ref[0] != 'Stage' and widget in self._art_shown:
                     self._art_paint(widget, None)
                 if (not cache_only and self._art_request is None and not wire.get('Pending')
                         and not wire.get('Clearing') and self.sent == self.received and wire.get('Epoch') is not None):

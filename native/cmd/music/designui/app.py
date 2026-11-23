@@ -571,6 +571,12 @@ class Preview:
             row.set_child(line)
             self.queue_list.append(row)
 
+    def quality_entries(self):
+        return [('标准', None), ('无损', None)]
+
+    def compact_quality_entries(self):
+        return [('音质', lambda: self.dialog('音质', ['标准','无损'], '确定'))]
+
     def player(self):
         outer = self.player_inner = margin(box(True, 6), 18, 10)
         surface = box(True)
@@ -605,11 +611,12 @@ class Preview:
         self.tools = box(spacing=3)
         self.tools.set_valign(Gtk.Align.CENTER)
         self.tools.append(menu('播放模式', [(x, lambda y=x: self.set_mode(y)) for x in ('顺序播放','列表循环','单曲循环','随机播放')], 'media-playlist-repeat-symbolic'))
-        self.tools.append(menu('音质', [(x, None) for x in ('标准','无损')], 'audio-x-generic-symbolic'))
+        self.quality_button = menu('音质', self.quality_entries(), 'audio-x-generic-symbolic')
+        self.tools.append(self.quality_button)
         options.append(self.tools)
         self.more = menu('播放选项', [
             ('播放模式', lambda: self.dialog('播放模式', ['顺序播放','列表循环','单曲循环','随机播放'], '确定')),
-            ('音质', lambda: self.dialog('音质', ['标准','无损'], '确定'))])
+            *self.compact_quality_entries()])
         options.append(self.more)
         self.volume_button = Gtk.VolumeButton()
         options.append(self.volume_button)
@@ -764,6 +771,12 @@ class Preview:
     def lyric_current(self):
         return 2
 
+    def stage_art(self, n, size):
+        return self.art(n, size)
+
+    def append_stage_metadata(self, artwork):
+        pass
+
     def lyrics(self):
         if old := self.screen.get_child_by_name('lyrics'):
             self.screen.remove(old)
@@ -781,7 +794,7 @@ class Preview:
         artwork.set_halign(Gtk.Align.CENTER)
         artwork_variants = Gtk.Stack(hhomogeneous=False, vhomogeneous=False)
         for name, size in (('compact', 136), ('regular', 296), ('large', 424)):
-            artwork_variants.add_named(self.art(self.current, size), name)
+            artwork_variants.add_named(self.stage_art(self.current, size), name)
         artwork_variants.set_visible_child_name('regular')
         artwork.append(artwork_variants)
         self.stage_cover = artwork_variants
@@ -791,6 +804,7 @@ class Preview:
         artist = label(TRACKS[self.current][1], 'dim-label')
         artist.set_halign(Gtk.Align.CENTER)
         artwork.append(artist)
+        self.append_stage_metadata(artwork)
         spread.append(artwork)
         text = box(True, 20)
         text.set_valign(Gtk.Align.CENTER)
