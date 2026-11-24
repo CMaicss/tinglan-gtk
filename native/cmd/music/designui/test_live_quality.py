@@ -51,20 +51,33 @@ class LiveQualityTest(unittest.TestCase):
             ui.state = {'Current': 0, 'QualityRequested': 'lossless', 'QualityActual': 'standard'}
             ui.lyrics()
             badge = ui.stage_flac_badge
-            self.assertFalse(badge.get_visible())
+            self.assertTrue(badge.get_visible())
+            revealer = badge.get_last_child()
+            self.assertIsInstance(revealer, d.Gtk.Revealer)
+            self.assertEqual(revealer.get_transition_type(), d.Gtk.RevealerTransitionType.CROSSFADE)
+            self.assertFalse(revealer.get_reveal_child())
             self.assertEqual(badge.get_prev_sibling().get_text(), 'Fixture album')
             stage = ui.screen.get_child_by_name('lyrics')
+            cover_y = {}
             for actual, visible in [('lossless', True), ('standard', False), ('', False)]:
                 ui.update_quality(dict(ui.state, QualityActual=actual), ui.state)
-                self.assertEqual(badge.get_visible(), visible)
+                self.assertTrue(badge.get_visible())
+                self.assertEqual(revealer.get_reveal_child(), visible)
                 self.assertIs(ui.screen.get_child_by_name('lyrics'), stage)
-                if visible:
-                    picture = badge.get_last_child()
-                    self.assertEqual(picture.get_paintable().get_intrinsic_width(), 44)
-                    for variant, width in [('compact', 160), ('regular', 296), ('large', 424)]:
-                        ui.stage_cover.set_visible_child_name(variant)
-                        badge.get_parent().allocate(width, 640, -1, None)
-                        self.assertEqual((badge.get_width(), badge.get_height()), (44, 18))
+                picture = revealer.get_child()
+                self.assertEqual(picture.get_paintable().get_intrinsic_width(), 44)
+                for variant, width in [('compact', 160), ('regular', 296), ('large', 424)]:
+                    ui.stage_cover.set_visible_child_name(variant)
+                    artwork = badge.get_parent()
+                    artwork.allocate(width, 640, -1, None)
+                    self.assertEqual((badge.get_width(), badge.get_height()), (44, 18))
+                    if visible:
                         self.assertEqual((picture.get_width(), picture.get_height()), (44, 18))
+                    ok, bounds = ui.stage_cover.compute_bounds(artwork)
+                    self.assertTrue(ok)
+                    if actual == 'lossless':
+                        cover_y[variant] = bounds.get_y()
+                    else:
+                        self.assertEqual(bounds.get_y(), cover_y[variant])
         finally:
             ui.quit_window()

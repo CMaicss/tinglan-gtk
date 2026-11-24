@@ -292,18 +292,20 @@ def Live(app, args, preview):
             badge.set_child(slot)
             picture = Gtk.Picture.new_for_filename(str(d.asset("icons/flac-badge.svg")))
             picture.set_content_fit(Gtk.ContentFit.CONTAIN)
-            badge.add_overlay(picture)
-            badge.set_measure_overlay(picture, False)
+            picture.update_property([Gtk.AccessibleProperty.LABEL], ["FLAC"])
+            revealer = Gtk.Revealer(child=picture, transition_type=Gtk.RevealerTransitionType.CROSSFADE,
+                                    transition_duration=180, reveal_child=self.state.get("QualityActual") == "lossless")
+            badge.add_overlay(revealer)
+            badge.set_measure_overlay(revealer, False)
             badge.set_halign(Gtk.Align.CENTER)
             badge.set_valign(Gtk.Align.CENTER)
-            badge.update_property([Gtk.AccessibleProperty.LABEL], ["FLAC"])
-            badge.set_visible(self.state.get("QualityActual") == "lossless")
             artwork.append(badge)
             self.stage_flac_badge = badge
+            self.stage_flac_revealer = revealer
 
         def update_quality(self, state, old):
-            if badge := getattr(self, "stage_flac_badge", None):
-                badge.set_visible(state.get("QualityActual") == "lossless")
+            if revealer := getattr(self, "stage_flac_revealer", None):
+                revealer.set_reveal_child(state.get("QualityActual") == "lossless")
             labels = {"standard": "标准（MP3）", "lossless": "无损（FLAC）"}
             actual = labels.get(state.get("QualityActual"), "未确认")
             text = f"当前音质：{actual}"
