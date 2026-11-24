@@ -49,9 +49,18 @@ class StageBackdropTest(unittest.TestCase):
             settings.set_property('gtk-enable-animations', False)
             ui.win.present()
             ui.lyrics()
+            pointer = patch.object(ui.chrome_motion, 'contains_pointer', return_value=True)
+            pointer.start()
+            self.addCleanup(pointer.stop)
             self.assertFalse(ui.compact_brand.get_visible())
             self.assertTrue(ui.header_revealer.get_reveal_child())
+            ui.chrome_motion.emit('enter', 200.0, 300.0)
+            source = ui._chrome_idle_source
+            ui.chrome_motion.emit('motion', 201.0, 300.0)
+            self.assertEqual(ui._chrome_idle_source, source, 'motion must not churn idle timers')
             loop = d.GLib.MainLoop()
+            stationary = d.GLib.timeout_add(10, lambda: (ui.chrome_motion.emit('motion', 201.0, 300.0), True)[1])
+            self.addCleanup(d.GLib.source_remove, stationary)
             def finish():
                 loop.quit()
                 return False
@@ -66,7 +75,9 @@ class StageBackdropTest(unittest.TestCase):
             self.assertFalse(ui.player_revealer.get_child_revealed())
             self.assertEqual(ui.header_revealer.get_height(), 0)
             self.assertEqual(ui.player_revealer.get_height(), 0)
+            self.assertEqual(ui.win.get_cursor().get_name(), 'none')
             ui.chrome_motion.emit('motion', 200.0, 300.0)
+            self.assertIsNone(ui.win.get_cursor())
             self.assertTrue(ui.header_revealer.get_reveal_child())
             self.assertTrue(ui.player_revealer.get_reveal_child())
             self.assertFalse(ui.compact_brand.get_visible())

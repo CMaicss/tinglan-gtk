@@ -328,9 +328,13 @@ class Preview:
                                            transition_duration=240)
         self.main_pane.append(self.player_revealer)
         self._chrome_idle_source = 0
+        self._chrome_idle_deadline = 0
+        self._chrome_pointer_position = None
+        self._chrome_cursor_hidden = False
         self.chrome_motion = Gtk.EventControllerMotion()
-        self.chrome_motion.connect('motion', self.stage_chrome_activity)
-        self.chrome_motion.connect('enter', self.stage_chrome_activity)
+        self.chrome_motion.connect('motion', self.stage_chrome_motion)
+        self.chrome_motion.connect('enter', self.stage_chrome_motion)
+        self.chrome_motion.connect('leave', self.stage_chrome_leave)
         clicks = Gtk.GestureClick(button=0)
         clicks.connect('pressed', self.stage_chrome_activity)
         clicks.connect('released', self.stage_chrome_activity)
@@ -522,6 +526,23 @@ class Preview:
         if self._chrome_idle_source:
             GLib.source_remove(self._chrome_idle_source)
             self._chrome_idle_source = 0
+        self.stage_chrome_leave()
+
+    def stage_chrome_leave(self, *_):
+        self._chrome_pointer_position = None
+        self.set_stage_cursor_hidden(False)
+
+    def set_stage_cursor_hidden(self, hidden):
+        if hidden != self._chrome_cursor_hidden:
+            self._chrome_cursor_hidden = hidden
+            self.win.set_cursor_from_name('none' if hidden else None)
+
+    def stage_chrome_motion(self, _controller, x, y):
+        # GTK can deliver motion/crossing events at the same coordinates
+        # when widgets move under a stationary pointer.
+        if self._chrome_pointer_position != (x, y):
+            self._chrome_pointer_position = (x, y)
+            self.stage_chrome_activity()
 
     def set_stage_chrome_visible(self, visible):
         self.header_revealer.set_reveal_child(visible)
@@ -529,15 +550,23 @@ class Preview:
 
     def stage_chrome_activity(self, *_):
         if (self.view == 'lyrics' or self.win.is_fullscreen()) and self.win.get_mapped():
-            self.cancel_stage_chrome_idle()
-            self.set_stage_chrome_visible(True)
-            self._chrome_idle_source = GLib.timeout_add(self.chrome_idle_ms, self.hide_idle_stage_chrome)
+            self.set_stage_cursor_hidden(False)
+            if not self.header_revealer.get_reveal_child():
+                self.set_stage_chrome_visible(True)
+            self._chrome_idle_deadline = GLib.get_monotonic_time() + self.chrome_idle_ms * 1000
+            if not self._chrome_idle_source:
+                self._chrome_idle_source = GLib.timeout_add(self.chrome_idle_ms, self.hide_idle_stage_chrome)
         return False  # Observe input without consuming it.
 
     def hide_idle_stage_chrome(self):
         self._chrome_idle_source = 0
-        if self.view == 'lyrics' or self.win.is_fullscreen():
-            self.set_stage_chrome_visible(False)
+        if (self.view == 'lyrics' or self.win.is_fullscreen()) and self.win.get_mapped():
+            remaining = self._chrome_idle_deadline - GLib.get_monotonic_time()
+            if remaining > 0:
+                self._chrome_idle_source = GLib.timeout_add((remaining + 999) // 1000, self.hide_idle_stage_chrome)
+            else:
+                self.set_stage_cursor_hidden(self.chrome_motion.contains_pointer())
+                self.set_stage_chrome_visible(False)
         return GLib.SOURCE_REMOVE
 
     def refresh_stage_backdrop(self):
