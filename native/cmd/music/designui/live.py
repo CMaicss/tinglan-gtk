@@ -247,7 +247,14 @@ def Live(app, args, preview):
         def clear_queue(self): self.send('queue-clear')
         def remove_queue(self, index): self.play_action('queue-remove', 'Queue', index)
         def play_all(self): self.play_action('play-favorites', 'Favorites', 0)
-        def set_mode(self, mode): self.send('mode', Index=('顺序播放','列表循环','单曲循环','随机播放').index(mode))
+        def set_mode(self, index):
+            if 0 <= index < len(d.PLAY_MODES):
+                self.send('mode', Index=index)
+
+        def settings_apply(self, snapshot):
+            super().settings_apply(snapshot)
+            if isinstance(settings := snapshot.get('Settings'), dict):
+                self.show_play_mode(settings.get('Mode', 0))
         def open(self, key):
             previous = getattr(self, 'view', None)
             result = super().open(key)

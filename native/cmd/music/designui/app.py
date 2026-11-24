@@ -123,6 +123,14 @@ def menu(title, entries, glyph='view-more-symbolic'):
     return Gtk.MenuButton(icon_name=glyph, tooltip_text=title, popover=pop, css_classes=['flat'])
 
 
+PLAY_MODES = (
+    ('顺序播放', 'media-playlist-consecutive-symbolic'),
+    ('列表循环', 'media-playlist-repeat-symbolic'),
+    ('单曲循环', 'media-playlist-repeat-song-symbolic'),
+    ('随机播放', 'media-playlist-shuffle-symbolic'),
+)
+
+
 def cover(n, size, rounded=False):
     dark, mid, light = PALETTES[n % len(PALETTES)]
     cx = 65 + n % 5 * 24
@@ -946,13 +954,21 @@ class Preview:
         options.set_valign(Gtk.Align.CENTER)
         self.tools = box(spacing=3)
         self.tools.set_valign(Gtk.Align.CENTER)
-        self.tools.append(menu('播放模式', [(x, lambda y=x: self.set_mode(y)) for x in ('顺序播放','列表循环','单曲循环','随机播放')], 'media-playlist-repeat-symbolic'))
+        self.mode_button = menu('播放模式', [(name, lambda i=i: self.set_mode(i))
+                                              for i, (name, _) in enumerate(PLAY_MODES)], PLAY_MODES[0][1])
+        self.tools.append(self.mode_button)
         self.quality_button = menu('音质', self.quality_entries(), 'audio-x-generic-symbolic')
         self.tools.append(self.quality_button)
         options.append(self.tools)
         self.more = menu('播放选项', [
-            ('播放模式', lambda: self.dialog('播放模式', ['顺序播放','列表循环','单曲循环','随机播放'], '确定')),
-            *self.compact_quality_entries()])
+            ('播放模式', self.show_mode_dialog), *self.compact_quality_entries()])
+        self.compact_mode_button = self.more.get_popover().get_child().get_first_child()
+        mode_row = box(spacing=8)
+        self.compact_mode_icon = icon(PLAY_MODES[0][1])
+        mode_row.append(self.compact_mode_icon)
+        mode_row.append(label('播放模式'))
+        self.compact_mode_button.set_child(mode_row)
+        self.show_play_mode(0)
         options.append(self.more)
         self.volume_button = Gtk.VolumeButton()
         options.append(self.volume_button)
@@ -1016,8 +1032,32 @@ class Preview:
         elif not in_sidebar and self.identity.get_parent() is self.sidebar_track:
             self.sidebar_track.remove(self.identity)
 
-    def set_mode(self, mode):
-        self.mode = mode
+    def show_play_mode(self, index):
+        if not 0 <= index < len(PLAY_MODES) or getattr(self, 'mode', None) == index:
+            return
+        self.mode = index
+        name, glyph = PLAY_MODES[index]
+        self.mode_button.set_icon_name(glyph)
+        self.compact_mode_icon.set_from_icon_name(glyph)
+        title = '播放模式：' + name
+        for widget in (self.mode_button, self.compact_mode_button):
+            widget.set_tooltip_text(title)
+            widget.update_property([Gtk.AccessibleProperty.LABEL], [title])
+
+    def show_mode_dialog(self):
+        picker = Gtk.DropDown.new_from_strings([name for name, _ in PLAY_MODES])
+        picker.set_selected(self.mode)
+        picker.update_property([Gtk.AccessibleProperty.LABEL], ['播放模式'])
+        dialog = Adw.AlertDialog(heading='播放模式', extra_child=picker)
+        dialog.add_response('cancel', '取消')
+        dialog.add_response('confirm', '确定')
+        dialog.set_close_response('cancel')
+        dialog.set_response_appearance('confirm', Adw.ResponseAppearance.SUGGESTED)
+        dialog.connect('response', lambda _, response: self.set_mode(picker.get_selected()) if response == 'confirm' else None)
+        dialog.present(self.win)
+
+    def set_mode(self, index):
+        self.show_play_mode(index)
 
     def toggle_play(self):
         self.playing = not self.playing
