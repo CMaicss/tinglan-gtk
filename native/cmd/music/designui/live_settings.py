@@ -283,7 +283,11 @@ def settings_mixin(d):
             theme, size, font = appearance
             if not (getattr(self.args, 'dark', False) or getattr(self.args, 'light', False)):
                 schemes = (Adw.ColorScheme.DEFAULT, Adw.ColorScheme.FORCE_LIGHT, Adw.ColorScheme.FORCE_DARK)
-                Adw.StyleManager.get_default().set_color_scheme(schemes[theme] if 0 <= theme < len(schemes) else schemes[0])
+                scheme = schemes[theme] if 0 <= theme < len(schemes) else schemes[0]
+                if getattr(self, 'view', None) == 'lyrics':
+                    self._library_color_scheme = scheme
+                else:
+                    Adw.StyleManager.get_default().set_color_scheme(scheme)
             family = ''.join(f'\\{ord(ch):x} ' for ch in font)
             extra = f'font-family: "{family}";' if family else ''
             self.settings_css.load_from_string(f'window.tinglan-live-settings {{ font-size: {int(size)}%; {extra} }}')

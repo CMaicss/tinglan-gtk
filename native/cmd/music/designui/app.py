@@ -538,6 +538,12 @@ class Preview:
         previous = getattr(self, 'view', None)
         self.view = key
         if key != previous:
+            if key == 'lyrics':
+                manager = Adw.StyleManager.get_default()
+                self._library_color_scheme = manager.get_color_scheme()
+                manager.set_color_scheme(Adw.ColorScheme.FORCE_DARK)
+            elif previous == 'lyrics' and hasattr(self, '_library_color_scheme'):
+                Adw.StyleManager.get_default().set_color_scheme(self._library_color_scheme)
             self.cancel_stage_chrome_idle()
             self.set_stage_chrome_visible(True)
             self.stage_chrome_activity()

@@ -158,6 +158,28 @@ class StageBackdropTest(unittest.TestCase):
         self.assertEqual(rendered, [640])
         ui.open('favorites')
 
+    def test_lyrics_forces_dark_theme_and_restores_library_preference(self):
+        d.Adw.init()
+        application = d.Adw.Application(application_id='org.tinglan.TestStageTheme', flags=d.Gio.ApplicationFlags.NON_UNIQUE)
+        application.register(None)
+        args = SimpleNamespace(width=1140, height=760, page='favorites', queue=False, smoke=False, light=True, dark=False)
+        manager = d.Adw.StyleManager.get_default()
+        self.addCleanup(manager.set_color_scheme, manager.get_color_scheme())
+        manager.set_color_scheme(d.Adw.ColorScheme.FORCE_LIGHT)
+        with patch.object(d, 'TRACKS', [('歌曲', '歌手', '专辑', '1:00')] * 6):
+            ui = d.Preview(application, args)
+            self.addCleanup(ui.win.destroy)
+            ui.win.present()
+            ui.lyrics()
+            self.assertTrue(manager.get_dark())
+            ui.mode_button.popup()
+            self.assertTrue(ui.mode_button.get_popover().get_visible())
+            ui.mode_button.popdown()
+            ui.open('lyrics')  # Rebuilding the stage must not replace the saved theme.
+            ui.open('favorites')
+        self.assertEqual(manager.get_color_scheme(), d.Adw.ColorScheme.FORCE_LIGHT)
+        self.assertFalse(manager.get_dark())
+
     def test_cover_geometry_and_page_scope(self):
         d.Adw.init()
         application = d.Adw.Application(application_id='org.tinglan.TestBackdrop', flags=d.Gio.ApplicationFlags.NON_UNIQUE)
