@@ -32,6 +32,8 @@ jobs:
       version: ${{ steps.version.outputs.value }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-go@v5
         with:
           go-version-file: native/go.mod
@@ -42,12 +44,13 @@ jobs:
           go test ./cmd/music ./internal/lyrics ./internal/plugin ./internal/storage ./internal/webauth -timeout 180s
           mkdir -p ../out/native
           go build -trimpath -ldflags='-s -w' -o ../out/native/tinglan ./cmd/music
-      - name: Read version
+      - name: Test release version calculation
+        run: bash native/scripts/test-release-version.sh
+      - name: Calculate release version
         id: version
         if: github.event_name != 'pull_request'
-        working-directory: native
         run: |
-          version=$(go run ./cmd/tinglan-tool version --short)
+          version=$(bash native/scripts/release-version.sh)
           printf 'value=%s\n' "$version" >> "$GITHUB_OUTPUT"
       - name: Install Linux packaging tools
         if: github.event_name != 'pull_request'
@@ -109,7 +112,6 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ needs.linux.outputs.version }}
-          RUN_NUMBER: ${{ github.run_number }}
           COMMIT: ${{ github.sha }}
         run: |
           set -euo pipefail
@@ -119,7 +121,7 @@ jobs:
           cp "packages/tinglan_${VERSION}-1_amd64.deb" "packages/tinglan-${VERSION}-1.x86_64.rpm" \
             "packages/tinglan-${VERSION}-x86_64.AppImage" plugins/*.zip release-assets/
           (cd release-assets && sha256sum -- *.deb *.rpm *.AppImage *.zip > SHA256SUMS)
-          gh release create "v${VERSION}-build.${RUN_NUMBER}" release-assets/* \
+          gh release create "v${VERSION}" release-assets/* \
             --repo "$GITHUB_REPOSITORY" --target "$COMMIT" --latest \
-            --title "听澜 Tinglan ${VERSION} · Linux Build ${RUN_NUMBER}" \
+            --title "听澜 Tinglan ${VERSION} · Linux" \
             --notes '未签名、非官方 Linux x86_64 构建。OAuth 身份不属于本项目。AppImage 仍需要系统 Python 3、PyGObject、GTK4 和 libadwaita ≥ 1.6；音源插件单独安装。'

@@ -134,6 +134,8 @@ go build -o ../out/native/tinglan ./cmd/music
 
 Linux 常规构建不需要临时 Go overlay。GitHub Actions 对 PR 只检查和构建；手动运行上传 Artifacts，不发布；`main` 推送在校验三种格式和音源包后才发布。AppImage 仍需要宿主机的 GTK / Python 运行时。
 
+发行版本由 `bash native/scripts/release-version.sh` 计算，格式为 `<tag>.<feat>.<other>`。第一段取当前提交可达的最新手动基准标签（如 `v1`、`v2`，按标签日期），没有基准则用 `0`，从历史起点计数。其余两段分别统计基准标签之后的 `feat:`、`feat(scope):`（含 `!`）和其他提交。自动生成的 Release 标签（如 `v2.3.5`）和旧 `-build.*` 标签不参与选基准。三个应用包和 Release 使用同一个版本号，独立音源包沿用各自的版本。
+
 </details>
 
 ## 账号安全与隐私边界
