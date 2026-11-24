@@ -146,10 +146,20 @@ class DesignArtDeliveryTest(unittest.TestCase):
         ui.art_apply(state)
         self.assertEqual(len(sent), attempts + 1)
         self.assertIs(stage.get_last_child().get_paintable(), texture)
-        state['Art']['Reply'] = {'ID': 's:one', 'Field': 'Stage', 'Index': 0, 'PNG': png_fixture(640)}
+        state['Art']['Reply'] = {'ID': 's:one', 'Field': 'Stage', 'Index': 0, 'PNG': png_fixture(180)}
+        ui.art_apply(state)
+        state['Art'].pop('Reply')
+        state['Art']['StageUpgrade'] = {'ID': 's:previous', 'PNG': png_fixture(640)}
+        ui.art_apply(state)
+        self.assertEqual(stage.get_last_child().get_paintable().get_width(), 180)
+        state['Art']['StageUpgrade'] = {'ID': 's:one', 'PNG': png_fixture(640)}
         ui.art_apply(state)
         self.assertEqual(stage.get_last_child().get_paintable().get_width(), 640)
         self.assertEqual(thumb.get_last_child().get_paintable().get_width(), 12)
+        state['Art'] = {'Epoch': 1, 'StageIdentity': 'new-album'}
+        ui.art_apply(state)
+        self.assertEqual(stage.get_last_child().get_paintable().get_width(), 12)
+        self.assertEqual(sent[-1], ('art', {'ID': 's:one', 'Text': 'Stage', 'Index': 0}))
 
     def test_scrolled_out_art_only_requests_after_entering_viewport(self):
         ui, sent = self.make_ui()

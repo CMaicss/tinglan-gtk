@@ -1,3 +1,5 @@
+GTK 播放页封面（develop）：先查高清缓存，再显示低清缓存或占位图；高清下载与缓存读取独立，切歌后已发出的下载可完成并写缓存，但不更新当前歌曲的封面。
+
 GTK 单实例启动（develop）：同一桌面 D-Bus 会话内再次启动时，GTK 唤回已有主窗口，不创建第二个窗口或播放后端；离线预览与 Go 配置目录保护保持不变。隔离 GTK / D-Bus 已验证隐藏窗口恢复、后端 PID 不变、退出后可重新启动；GNOME / Wayland 启动器焦点行为待实机验收。
 
 登录窗口（2026-11-02，develop，未提交）：macOS 的华为登录从系统授权 sheet（ASWebAuthenticationSession）改为应用内 `WKWebView` 窗口（`native/internal/webauth/browser_darwin.m`）：独立 `NSWindow`（820×720）、`WKWebsiteDataStore.nonPersistent` 临时 cookie、`WKNavigationDelegate` 只放行 `huawei.AllowedLoginURL` 的 https 域并在 `hms://` 回调时关窗；窗口不可用或设置 `TINGLAN_AUTH_SYSTEM=1` 时回落到原系统 sheet，绝不启动外置浏览器。Windows 侧补 WebView2 安装引导：缺 Runtime 时 `webauth.ErrWebView2Missing` 触发“需要安装 WebView2”dialog，含微软官方 Evergreen bootstrapper 下载入口（约 1.5 MB，不打包 Chromium）。验证：`go build ./...`、`go vet ./...`、`go test ./...` 通过，新增 dialog 渲染测试；WKWebView 窗口与 Windows 安装引导尚未实机验证。未提交、未推送。

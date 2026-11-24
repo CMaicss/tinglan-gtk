@@ -26,6 +26,8 @@ def art_mixin(d):
     Gtk = d.Gtk
 
     class LiveArt:
+        current: int | None  # supplied by the player binding
+
         def _art_init(self):
             if hasattr(self, '_art_mapped'):
                 return
@@ -149,9 +151,10 @@ def art_mixin(d):
                     return ref
             return None
 
-        @staticmethod
-        def _art_key(ref):
-            return ('Stage' if ref[0] == 'Stage' else ref[0] == 'Playlists', ref[2])
+        def _art_key(self, ref):
+            if ref[0] == 'Stage':
+                return ('Stage', ref[2], self._art_state.get('StageIdentity'))
+            return (ref[0] == 'Playlists', ref[2])
 
         def art_apply(self, state):
             self._art_init()
@@ -183,23 +186,31 @@ def art_mixin(d):
                     rows = state.get('Queue' if ref[0] == 'Stage' else ref[0]) or ()
                     if (0 <= ref[1] < len(rows) and rows[ref[1]]['ID'] == ref[2]
                             and (ref[0] != 'Stage' or ref[1] == state.get('Current'))):
-                        key = self._art_key(ref)
-                        texture = self._art_texture(reply.get('PNG'))
-                        if ref[0] == 'Stage':
-                            previous, _ = self._art_textures.get(key, (None, 0))
-                            if previous is not None and (texture is None or previous.get_width() > texture.get_width()):
-                                texture = previous
-                        self._art_textures[key] = (texture, now)
-                        self._art_textures.move_to_end(key)
-                        while len(self._art_textures) > _CACHE:
-                            old, _ = self._art_textures.popitem(last=False)
-                            for widget, (asset, _) in tuple(self._art_shown.items()):
-                                if asset == old:
-                                    self._art_paint(widget, None)
+                        self._art_remember(ref, self._art_texture(reply.get('PNG')), now)
+            if (upgrade := wire.get('StageUpgrade')) is not None:
+                ref = self._art_ref(('Stage', self.current), state)
+                if ref is not None and ref[2] == upgrade.get('ID'):
+                    texture = self._art_texture(upgrade.get('PNG'))
+                    if texture is not None and texture.get_width() >= _STAGE_ENOUGH:
+                        self._art_remember(ref, texture, now)
             if not wire.get('Pending'):
                 self._art_request = None
             self._art_refresh(state)
             self._art_update_lyric_controls()
+
+        def _art_remember(self, ref, texture, now):
+            key = self._art_key(ref)
+            if ref[0] == 'Stage':
+                previous, _ = self._art_textures.get(key, (None, 0))
+                if previous is not None and (texture is None or previous.get_width() > texture.get_width()):
+                    texture = previous
+            self._art_textures[key] = (texture, now)
+            self._art_textures.move_to_end(key)
+            while len(self._art_textures) > _CACHE:
+                old, _ = self._art_textures.popitem(last=False)
+                for widget, (asset, _) in tuple(self._art_shown.items()):
+                    if asset == old:
+                        self._art_paint(widget, None)
 
         def _art_refresh(self, state, cache_only=False):
             wire = self._art_state

@@ -7,14 +7,146 @@ import (
 	"image"
 	imagecolor "image/color"
 	"image/png"
+	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
 
+	"github.com/vivaui/viva/ui"
+
 	"tinglan/native/internal/music"
+	"tinglan/native/internal/resource"
 	"tinglan/native/internal/storage"
 )
+
+type designArtTransport func(*http.Request) (*http.Response, error)
+
+func (f designArtTransport) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+func TestDesignStageShowsCachedThumbnailBeforeNetworkAndSavesAfterSkip(t *testing.T) {
+	const first = "https://covers.dbankcdn.cn/first.png"
+	const second = "https://covers.dbankcdn.cn/second.png"
+	fixture := func(n int) []byte {
+		var out bytes.Buffer
+		if err := png.Encode(&out, image.NewNRGBA(image.Rect(0, 0, n, n))); err != nil {
+			t.Fatal(err)
+		}
+		return out.Bytes()
+	}
+	low, high := fixture(192), fixture(720)
+	started, release := make(chan struct{}, 1), make(chan struct{})
+	transport := http.DefaultTransport
+	http.DefaultTransport = designArtTransport(func(r *http.Request) (*http.Response, error) {
+		if r.URL.String() != first {
+			t.Errorf("unexpected cover download: %s", r.URL.Path)
+		}
+		select {
+		case started <- struct{}{}:
+		default:
+		}
+		select {
+		case <-r.Context().Done():
+			return nil, r.Context().Err()
+		case <-release:
+			return &http.Response{StatusCode: 200, Body: io.NopCloser(bytes.NewReader(high))}, nil
+		}
+	})
+	client := resource.New()
+	http.DefaultTransport = transport
+	m := newModel()
+	defer m.close()
+	defer designArtClose(m)
+	m.store, m.resourceClient = storage.New(t.TempDir()), client
+	stage := designStageStore(m.store)
+	if err := m.store.SaveCover(first, low); err != nil {
+		t.Fatal(err)
+	}
+	if err := stage.SaveCover(second, high); err != nil {
+		t.Fatal(err)
+	}
+	tracks := []music.Track{{ID: "first", Source: "huawei", CoverURL: first}, {ID: "second", Source: "huawei", CoverURL: second}}
+	m.queue.Replace(tracks, 0)
+	request := func(id string, index, width int) {
+		t.Helper()
+		designArtCommand(m, designCommand{Op: "art", Text: "Stage", ID: "huawei:" + id, Index: index})
+		for deadline := time.Now().Add(time.Second); time.Now().Before(deadline); time.Sleep(time.Millisecond) {
+			if reply := designArtState(m).(designArtView).Reply; reply != nil {
+				cfg, _, err := image.DecodeConfig(bytes.NewReader(reply.PNG))
+				if reply.ID != "huawei:"+id || err != nil || cfg.Width != width {
+					t.Fatalf("%s: cache delivered width %d, err %v, reply ID %q", id, cfg.Width, err, reply.ID)
+				}
+				return
+			}
+		}
+		t.Fatalf("cached %s cover blocked by an unfinished download", id)
+	}
+	request("first", 0, 192)
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("HD download did not start")
+	}
+	m.queue.Replace(tracks, 1)
+	request("second", 1, 720)
+	close(release)
+	for deadline := time.Now().Add(time.Second); time.Now().Before(deadline); time.Sleep(time.Millisecond) {
+		wire, _ := json.Marshal(designArtState(m))
+		if bytes.Contains(wire, []byte(`"ID":"huawei:first"`)) {
+			t.Fatal("late image sent to GTK")
+		}
+		if designArtFor(m).stageDownload == nil {
+			data, err := stage.LoadCover(first)
+			if err == nil && designStageWidth(data) == 720 {
+				return
+			}
+			break
+		}
+	}
+	t.Fatal("skipping should not cancel the previous track's cache write")
+}
+
+func TestDesignStageWorkerReusesHDWrittenWhileQueued(t *testing.T) {
+	cache := storage.New(t.TempDir())
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, image.NewNRGBA(image.Rect(0, 0, 720, 720))); err != nil {
+		t.Fatal(err)
+	}
+	if err := cache.SaveCover("shared", buf.Bytes()); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	data := designStageFetchHD(ctx, cache, []string{"shared"}, func(context.Context, string) ([]byte, error) {
+		t.Error("queued worker downloaded an already-cached image")
+		return nil, nil
+	}, nil, "")
+	if !bytes.Equal(data, buf.Bytes()) {
+		t.Fatal("queued worker did not deliver the new cache entry")
+	}
+}
+
+func TestDesignStageAlbumChangeDiscardsCompletedUpgrade(t *testing.T) {
+	m := newModel()
+	defer m.close()
+	defer designArtClose(m)
+	m.queue.Replace([]music.Track{{ID: "one", Source: "huawei", Album: &music.Album{ID: "old"}}}, 0)
+	s := designArtFor(m)
+	c := designCommand{Op: "art", Text: "Stage", ID: "huawei:one", Index: 0}
+	old, _ := json.Marshal(designArtState(m))
+	done := make(chan []byte, 1)
+	done <- []byte("completed cover")
+	s.stageDownload = &designStageDownload{designStageJob: designStageJob{request: c, albumKey: "album:huawei:old"}, done: done, cancel: func() {}}
+	m.queue.Current().Album = &music.Album{ID: "new"}
+	state := designArtState(m).(designArtView)
+	if state.StageUpgrade != nil {
+		t.Fatal("old album cover delivered for the same track ID")
+	}
+	now, _ := json.Marshal(state)
+	if bytes.Equal(old, now) {
+		t.Fatal("stage identity did not change with album")
+	}
+}
 
 func TestDesignStageUpgradesFromAlbumOnlyWhenTrackIsTooSmall(t *testing.T) {
 	fixture := func(n int) []byte {
@@ -35,7 +167,7 @@ func TestDesignStageUpgradesFromAlbumOnlyWhenTrackIsTooSmall(t *testing.T) {
 			return cover, nil
 		}
 		album := func(context.Context) string { calls++; return "detail" }
-		payload := designStageLoad(context.Background(), cache, []string{"track"}, fetch, album, "album:huawei:test")
+		payload := designStageFetchHD(context.Background(), cache, []string{"track"}, fetch, album, "album:huawei:test")
 		cfg, _, err := image.DecodeConfig(bytes.NewReader(payload))
 		want, wantCalls := 720, 0
 		if width == 160 {
@@ -44,7 +176,7 @@ func TestDesignStageUpgradesFromAlbumOnlyWhenTrackIsTooSmall(t *testing.T) {
 		if err != nil || cfg.Width != want || calls != wantCalls {
 			t.Fatalf("track=%d: got width=%d, album calls=%d, err=%v", width, cfg.Width, calls, err)
 		}
-		offline := designStageLoad(context.Background(), cache, []string{"track"}, nil, nil, "album:huawei:test")
+		offline := designStageCached(context.Background(), cache, nil, []string{"track"}, "album:huawei:test", ui.Bitmap{})
 		if !bytes.Equal(offline, payload) {
 			t.Fatal("stage artwork was not reusable offline")
 		}
@@ -74,7 +206,10 @@ func TestDesignStageRevalidatesSmallImageAtSameURL(t *testing.T) {
 		return large, nil
 	}
 	for range 2 {
-		data := designStageLoad(context.Background(), cache, []string{raw}, fetch, nil, "")
+		data := designStageCached(context.Background(), cache, nil, []string{raw}, "", ui.Bitmap{})
+		if designStageWidth(data) < designStageEnough {
+			data = designStageFetchHD(context.Background(), cache, []string{raw}, fetch, nil, "")
+		}
 		cfg, _, err := image.DecodeConfig(bytes.NewReader(data))
 		if err != nil || cfg.Width != 640 {
 			t.Fatalf("width=%d, err=%v", cfg.Width, err)

@@ -35,6 +35,8 @@ type designArtView struct {
 	Clearing             bool
 	Pending              bool
 	Reply                *designArtReply `json:",omitempty"`
+	StageUpgrade         *designArtReply `json:",omitempty"`
+	StageIdentity        string          `json:",omitempty"`
 	LyricToken           string          `json:",omitempty"`
 	LyricOffset          float64
 	LyricFeedback        string `json:",omitempty"`
@@ -54,6 +56,10 @@ type designArtSession struct {
 	epoch         uint64
 	urls          []string
 	reply         *designArtReply
+	stageStore    *storage.Store
+	stageJob      *designStageJob
+	stageNext     *designStageJob
+	stageDownload *designStageDownload
 	feedbackToken string
 	feedback      string
 }
@@ -73,6 +79,10 @@ func designArtClose(m *model) {
 		if s.result != nil {
 			s.cancel()
 			<-s.result
+		}
+		if d := s.stageDownload; d != nil {
+			d.cancel()
+			<-d.done
 		}
 	}
 }
@@ -100,12 +110,11 @@ func designArtCommand(m *model, c designCommand) bool {
 		reply := &designArtReply{Field: c.Text, ID: c.ID, Index: c.Index}
 		urls := designArtURLs(m, c)
 		stage := c.Text == "Stage"
-		var album func(context.Context) string
-		var albumKey string
+		var job designStageJob
 		if stage && c.Index == m.queue.Index && c.ID == m.qualityTrackKey() {
-			album, albumKey = designStageAlbum(m, c.Index)
+			job = designStageJobFor(m, c, urls)
 		}
-		if len(urls) == 0 && album == nil {
+		if len(urls) == 0 && job.albumKey == "" {
 			s.reply = reply
 			return true
 		}
@@ -113,13 +122,6 @@ func designArtCommand(m *model, c designCommand) bool {
 		done := make(chan []byte, 1)
 		s.result, s.cancel, s.request, s.epoch, s.urls = done, cancel, c, m.accountEpoch, urls
 		client, store, offline := m.resourceClient, m.store, m.demo
-		if stage {
-			go func() {
-				defer cancel()
-				done <- designStageLoad(ctx, designStageStore(store), urls, designStageNetwork(client, offline), album, albumKey)
-			}()
-			return true
-		}
 		var cached ui.Bitmap
 		for _, raw := range urls {
 			if b := m.covers[raw]; b.Width > 0 {
@@ -127,6 +129,18 @@ func designArtCommand(m *model, c designCommand) bool {
 				m.touchCover(raw)
 				break
 			}
+		}
+		if stage {
+			if s.stageStore == nil {
+				s.stageStore = designStageStore(store)
+			}
+			s.stageJob = &job
+			stageStore := s.stageStore
+			go func() {
+				defer cancel()
+				done <- designStageCached(ctx, stageStore, store, urls, job.albumKey, cached)
+			}()
+			return true
 		}
 		go func() {
 			defer cancel()
@@ -160,6 +174,9 @@ func designArtCommand(m *model, c designCommand) bool {
 func designArtState(m *model) any {
 	v := designArtView{Epoch: m.accountEpoch, LyricToken: designLyricToken(m), LyricOffset: m.lyricOffset}
 	s := designArtFor(m)
+	c := designCommand{Text: "Stage", ID: m.qualityTrackKey(), Index: m.queue.Index}
+	current := designStageJobFor(m, c, designArtURLs(m, c))
+	v.StageIdentity = current.identity()
 	if s.feedbackToken == v.LyricToken {
 		v.LyricFeedback = s.feedback
 	}
@@ -171,20 +188,35 @@ func designArtState(m *model) any {
 		case data := <-s.result:
 			c := s.request
 			currentURLs := designArtURLs(m, c)
-			if s.clear || s.epoch != m.accountEpoch || !slices.Equal(s.urls, currentURLs) || (c.Text == "Stage" && (c.Index != m.queue.Index || c.ID != m.qualityTrackKey())) {
-				data = nil
+			valid := !s.clear && s.epoch == m.accountEpoch && slices.Equal(s.urls, currentURLs)
+			if j := s.stageJob; j != nil {
+				if valid && j.sameArt(current) {
+					s.reply = &designArtReply{Field: c.Text, ID: c.ID, Index: c.Index, PNG: data}
+					if active := s.stageDownload; designStageWidth(data) < designStageEnough && (active == nil || !active.sameArt(*j)) {
+						s.stageNext = j
+					}
+				}
+			} else {
+				if !valid {
+					data = nil
+				}
+				s.reply = &designArtReply{Field: c.Text, ID: c.ID, Index: c.Index, PNG: data}
 			}
-			s.reply = &designArtReply{Field: c.Text, ID: c.ID, Index: c.Index, PNG: data}
+			s.stageJob = nil
 			s.result, s.cancel, s.urls, s.request = nil, nil, nil, designCommand{}
 		default:
 			v.Pending = true
 		}
 	}
-	if s.clear && s.result == nil {
+	v.StageUpgrade = s.stageState(m, current)
+	if s.clear && s.result == nil && s.stageDownload == nil {
 		s.clear, s.reply = false, nil
 		s.revision++
 		m.covers, m.stageCovers, m.coverUsed, m.coverRetry = nil, nil, nil, nil
-		if err := clearDesignArt(m.store); err != nil {
+		if s.stageStore == nil {
+			s.stageStore = designStageStore(m.store)
+		}
+		if err := clearDesignArt(m.store, s.stageStore); err != nil {
 			m.setStatus("封面缓存未能全部清除")
 		} else {
 			m.mediaArt.attempted = false
