@@ -6,7 +6,7 @@ import gi
 
 gi.require_version('Gtk', '4.0')
 gi.require_version('Adw', '1')
-from gi.repository import Adw, Gdk, Gio, GLib, Graphene, Gtk, Pango
+from gi.repository import Adw, Gdk, Gio, GLib, Graphene, Gsk, Gtk, Pango
 
 UI_DIR = Path(__file__).resolve().parent
 
@@ -140,6 +140,34 @@ def cover(n, size, rounded=False):
     art.set_overflow(Gtk.Overflow.HIDDEN)
     art.add_css_class('album-art' if size > 80 else 'art')
     return art
+
+
+class LyricFade(Gtk.Box):
+    def __init__(self, child):
+        super().__init__(orientation=Gtk.Orientation.VERTICAL, hexpand=True, vexpand=True)
+        self.append(child)
+        self.stops = []
+        for offset, alpha in ((0, 0), (1 / 3, 1), (2 / 3, 1), (1, 0)):
+            stop = Gsk.ColorStop()
+            stop.offset = offset
+            color = Gdk.RGBA()
+            color.alpha = alpha
+            stop.color = color
+            self.stops.append(stop)
+
+    def do_snapshot(self, snapshot):
+        width, height = self.get_width(), self.get_height()
+        if width <= 0 or height <= 0:
+            return
+        if not hasattr(snapshot, 'push_mask'):
+            Gtk.Box.do_snapshot(self, snapshot)
+            return
+        snapshot.push_mask(Gsk.MaskMode.ALPHA)
+        snapshot.append_linear_gradient(Graphene.Rect().init(0, 0, width, height),
+                                        Graphene.Point().init(0, 0), Graphene.Point().init(0, height), self.stops)
+        snapshot.pop()
+        Gtk.Box.do_snapshot(self, snapshot)
+        snapshot.pop()
 
 
 class StageBackdrop(Gtk.Widget):
@@ -1144,7 +1172,7 @@ class Preview:
             self.stage_scroll = scroll(text)
             self.stage_scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.EXTERNAL)
             spread.set_valign(Gtk.Align.FILL)
-            spread.append(self.stage_scroll)
+            spread.append(LyricFade(self.stage_scroll))
         else:
             spread.append(text)
         outfit.set_size_request(320, 420)

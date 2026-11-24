@@ -29,6 +29,40 @@ def flush():
 
 
 class DesignArtDeliveryTest(unittest.TestCase):
+    def test_lyric_viewport_fades_the_outer_thirds_only(self):
+        from gi.repository import GdkPixbuf
+        from tempfile import TemporaryDirectory
+
+        picture = Gtk.Picture(paintable=d.Gdk.Texture.new_from_bytes(GLib.Bytes.new(base64.b64decode(png_fixture(12)))))
+        picture.set_content_fit(Gtk.ContentFit.FILL)
+        panel = d.LyricFade(picture)
+        window = Gtk.Window(default_width=120, default_height=150, child=panel)
+        self.addCleanup(window.destroy)
+        window.present()
+        loop = GLib.MainLoop()
+        GLib.timeout_add(120, lambda: (loop.quit(), GLib.SOURCE_REMOVE)[1])
+        loop.run()
+        width, height = panel.get_width(), panel.get_height()
+        self.assertGreater(height, 100)
+        snapshot = Gtk.Snapshot.new()
+        Gtk.WidgetPaintable.new(panel).snapshot(snapshot, width, height)
+        texture = window.get_renderer().render_texture(snapshot.to_node(), d.Graphene.Rect().init(0, 0, width, height))
+        with TemporaryDirectory() as folder:
+            path = str(Path(folder) / 'lyric-mask.png')
+            self.assertTrue(texture.save_to_png(path))
+            result = GdkPixbuf.Pixbuf.new_from_file(path)
+        self.assertTrue(result.get_has_alpha())
+        pixels = result.get_pixels()
+        def alpha(y):
+            return pixels[y * result.get_rowstride() + (width // 2) * 4 + 3]
+        self.assertLess(alpha(0), 10)
+        self.assertIn(alpha(height // 6), range(115, 141))
+        self.assertEqual(alpha(height // 3), 255)
+        self.assertEqual(alpha(height // 2), 255)
+        self.assertGreaterEqual(alpha(height * 2 // 3), 250)
+        self.assertIn(alpha(height * 5 // 6), range(115, 141))
+        self.assertLess(alpha(height - 1), 10)
+
     def test_stage_lyric_subtitles_are_smaller_than_original(self):
         d.Adw.init()
         application = d.Adw.Application(application_id='org.tinglan.TestLyricStyle', flags=d.Gio.ApplicationFlags.NON_UNIQUE)
