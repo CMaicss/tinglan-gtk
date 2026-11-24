@@ -1218,8 +1218,19 @@ def main():
     parser.add_argument('--smoke', action='store_true')
     parser.add_argument('--backend', type=Path, help='Go backend executable; uses the current native account')
     args = parser.parse_args()
-    app = Adw.Application(flags=Gio.ApplicationFlags.NON_UNIQUE)
+    if args.backend:
+        # Match the desktop entry and let GTK forward activation (including
+        # the launcher's startup context) before constructing a window/backend.
+        app = Adw.Application(application_id='org.tinglan.unofficial.gtk')
+    else:
+        app = Adw.Application(flags=Gio.ApplicationFlags.NON_UNIQUE)
+    ui = None
+
     def activate(application):
+        nonlocal ui
+        if ui is not None:
+            ui.win.present()
+            return
         if args.dark:
             Adw.StyleManager.get_default().set_color_scheme(Adw.ColorScheme.FORCE_DARK)
         elif args.light:
@@ -1259,6 +1270,12 @@ def main():
                 return False
             GLib.timeout_add(450, run)
     app.connect('activate', activate)
+    if args.backend and args.smoke:
+        # A smoke invocation must run its own checks, not succeed by raising
+        # an already running player. Register without sending activation.
+        app.register(None)
+        if app.get_is_remote():
+            parser.exit(1, '听澜已在运行，请先退出再执行 --smoke。\n')
     result = app.run([])
     return 1 if getattr(app, 'smoke_failed', False) else result
 
