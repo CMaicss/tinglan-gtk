@@ -2,7 +2,6 @@
 """Tinglan GTK interface. Without a Go backend it runs in offline preview mode."""
 import argparse
 from pathlib import Path
-from weakref import WeakSet
 import gi
 
 gi.require_version('Gtk', '4.0')
@@ -151,9 +150,9 @@ class StageBackdrop(Gtk.Widget):
         super().__init__(can_target=False, hexpand=True, vexpand=True, visible=False)
         self.texture = None
         self.outgoing = None
+        self.outgoing_opacity = 1.0
         self.progress = 1.0
         self.animation = None
-        self.faces = WeakSet()
 
     @classmethod
     def cover_rect(cls, width, height, image_width, image_height):
@@ -162,28 +161,33 @@ class StageBackdrop(Gtk.Widget):
         w, h = image_width * scale, image_height * scale
         return (width - w) / 2, (height - h) / 2, w, h
 
-    def repaint(self):
-        self.queue_draw()
-        for face in self.faces:
-            face.queue_draw()
-
     def advance(self, progress):
         self.progress = progress
         if progress >= 1:
             self.outgoing = None
-        self.repaint()
+        self.queue_draw()
 
-    def set_texture(self, texture):
-        if self.texture is texture:
+    def set_texture(self, texture, *, animate=True):
+        if self.texture is texture and (animate or self.progress >= 1):
             return
-        old = self.outgoing if self.outgoing is not None and self.progress < .5 else self.texture
+        opacity = 1.0
+        if self.texture is None:
+            # A new cover can arrive during the fade to black. Continue from
+            # the current brightness, not the outgoing cover at full opacity.
+            old = self.outgoing
+            opacity = self.outgoing_opacity * (1 - self.progress)
+        elif self.outgoing is not None and self.progress < .5:
+            old = self.outgoing
+        else:
+            old = self.texture
         if self.animation is not None:
             self.animation.pause()
             self.animation = None
         self.texture = texture
-        if (old is not None and texture is not None and self.get_mapped()
+        if (animate and (old is not None or texture is not None) and self.get_mapped()
                 and self.get_settings().get_property('gtk-enable-animations')):
             self.outgoing = old
+            self.outgoing_opacity = opacity
             self.advance(0)
             target = Adw.CallbackAnimationTarget.new(self.advance)
             self.animation = Adw.TimedAnimation.new(self, 0, 1, 230, target)
@@ -192,21 +196,32 @@ class StageBackdrop(Gtk.Widget):
             self.advance(1)
 
     def paint_pair(self, snapshot, draw):
-        if self.outgoing is None:
-            draw(self.texture)
+        if self.outgoing is None or self.texture is None:
+            image = self.outgoing if self.texture is None else self.texture
+            if image is not None:
+                opacity = (1 - self.progress) * self.outgoing_opacity if self.texture is None else self.progress
+                snapshot.push_opacity(opacity)
+                draw(image)
+                snapshot.pop()
             return
         snapshot.push_cross_fade(self.progress)
+        snapshot.push_opacity(self.outgoing_opacity)
         draw(self.outgoing)
+        snapshot.pop()
         snapshot.pop()
         draw(self.texture)
         snapshot.pop()
 
     def do_snapshot(self, snapshot):
-        texture = self.texture
         width, height = self.get_width(), self.get_height()
-        if texture is None or min(width, height) <= 0:
+        if min(width, height) <= 0:
             return
         viewport = Graphene.Rect().init(0, 0, width, height)
+        shade = Gdk.RGBA()
+        shade.parse('#0c0c0c')
+        snapshot.append_color(shade, viewport)
+        if self.texture is None and self.outgoing is None:
+            return
         snapshot.push_clip(viewport)
         snapshot.push_blur(self.radius)
         luminance = Graphene.Matrix().init_from_float([
@@ -225,26 +240,6 @@ class StageBackdrop(Gtk.Widget):
         shade = Gdk.RGBA()
         shade.parse('rgba(12, 12, 12, 0.60)')
         snapshot.append_color(shade, viewport)
-        snapshot.pop()
-
-
-class StageCoverFace(Gtk.Widget):
-    def __init__(self, transition):
-        super().__init__(can_target=False, hexpand=True, vexpand=True)
-        self.transition = transition
-        transition.faces.add(self)
-
-    def do_snapshot(self, snapshot):
-        if self.transition.texture is None:
-            return
-        width, height = self.get_width(), self.get_height()
-        viewport = Graphene.Rect().init(0, 0, width, height)
-        snapshot.push_clip(viewport)
-        def draw(texture):
-            scale = max(width / texture.get_width(), height / texture.get_height())
-            w, h = scale * texture.get_width(), scale * texture.get_height()
-            snapshot.append_texture(texture, Graphene.Rect().init((width-w)/2, (height-h)/2, w, h))
-        self.transition.paint_pair(snapshot, draw)
         snapshot.pop()
 
 
@@ -547,31 +542,39 @@ class Preview:
 
     def refresh_stage_backdrop(self):
         if self.view != 'lyrics' or self.current is None:
-            self.set_stage_texture(None)
+            self.set_stage_texture(None, animate=False)
         elif (texture := self.stage_background_texture()) is not None:
             self.set_stage_texture(texture)
-        elif self.stage_backdrop.texture is not None:
-            if not self.stage_backdrop.get_settings().get_property('gtk-enable-animations'):
-                self.set_stage_texture(None)
-            elif not getattr(self, '_stage_grace_source', 0):
-                # Repeated snapshots or rapid skips without ready artwork must
-                # not extend the lifetime of the retained image.
-                self._stage_grace_source = GLib.timeout_add(
-                    self.stage_backdrop.artwork_grace_ms, self.expire_stage_texture)
+        elif self.stage_backdrop.texture is None or not self.stage_backdrop.get_settings().get_property('gtk-enable-animations'):
+            # Keep the playback surface dark even on the first cache miss
+            # or when system animations are disabled.
+            self.set_stage_texture(None)
+        elif not getattr(self, '_stage_grace_source', 0):
+            # Repeated snapshots or rapid skips without ready artwork must
+            # not extend the lifetime of the retained image.
+            self._stage_grace_source = GLib.timeout_add(
+                self.stage_backdrop.artwork_grace_ms, self.expire_stage_texture)
 
     def expire_stage_texture(self):
         self._stage_grace_source = 0
         self.set_stage_texture(None)
         return GLib.SOURCE_REMOVE
 
-    def set_stage_texture(self, texture):
+    def set_stage_texture(self, texture, *, animate=True):
         if source := getattr(self, '_stage_grace_source', 0):
             GLib.source_remove(source)
             self._stage_grace_source = 0
-        self.stage_backdrop.set_texture(texture)
-        available = texture is not None
-        self.stage_backdrop.set_visible(available)
-        if not available:
+        active = self.view == 'lyrics' and self.current is not None
+        previous = self.stage_backdrop.texture
+        same_track_upgrade = (active and texture is not None and previous is not None
+                              and getattr(self, '_stage_texture_track', None) == self.current
+                              and texture.get_width() > previous.get_width())
+        # A sharper copy of the same cover is a redraw, not a transition.
+        # Otherwise a delayed frame-clock tick can leave the thumbnail on top.
+        self._stage_texture_track = self.current if active and texture is not None else None
+        self.stage_backdrop.set_visible(active)
+        self.stage_backdrop.set_texture(texture, animate=active and animate and not same_track_upgrade)
+        if not active:
             self.stage_surface.remove_css_class("stage-glass")
         else:
             self.stage_surface.add_css_class("stage-glass")
@@ -1073,11 +1076,8 @@ class Preview:
         artwork.set_halign(Gtk.Align.CENTER)
         artwork_variants = Gtk.Stack(hhomogeneous=False, vhomogeneous=False)
         for name, size in (('compact', 136), ('regular', 296), ('large', 424)):
-            slot = Gtk.Overlay(child=self.stage_art(self.current, size), overflow=Gtk.Overflow.HIDDEN)
+            slot = self.stage_art(self.current, size)
             slot.add_css_class("album-art")
-            face = StageCoverFace(self.stage_backdrop)
-            slot.add_overlay(face)
-            slot.set_measure_overlay(face, False)
             artwork_variants.add_named(slot, name)
         artwork_variants.set_visible_child_name('regular')
         artwork.append(artwork_variants)

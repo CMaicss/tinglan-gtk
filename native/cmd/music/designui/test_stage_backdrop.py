@@ -110,6 +110,43 @@ class StageBackdropTest(unittest.TestCase):
         self.assertIs(ui.stage_backdrop.texture, current)
         ui.open('favorites')
 
+    def test_hd_upgrade_paints_without_waiting_for_animation_tick(self):
+        d.Adw.init()
+        application = d.Adw.Application(application_id='org.tinglan.TestHDRedraw', flags=d.Gio.ApplicationFlags.NON_UNIQUE)
+        application.register(None)
+        args = SimpleNamespace(backend=Path('/unused'), width=1140, height=760,
+                               page='favorites', queue=False, smoke=False, light=False, dark=False)
+        with patch('live.subprocess.Popen', return_value=SimpleNamespace(stdin=io.StringIO())), patch('live.threading.Thread'):
+            ui = Live(application, args, d.Preview)
+        self.addCleanup(ui.quit_window)
+        bg = ui.stage_backdrop
+        settings = ui.win.get_settings()
+        self.addCleanup(settings.set_property, 'gtk-enable-animations', settings.get_property('gtk-enable-animations'))
+        settings.set_property('gtk-enable-animations', True)
+        ui.win.present()
+        ui.view, ui.current = 'lyrics', 0
+        state = ui.state = {'Queue': [{'ID': 's:one'}], 'Current': 0,
+                            'Art': {'Epoch': 1, 'Reply': {'ID': 's:one', 'Field': 'Stage', 'Index': 0, 'PNG': png_fixture(192)}}}
+        ui.art_apply({'Art': {'Epoch': 1}})
+        ui._art_request = ('Stage', 0, 's:one')
+        ui.art_apply(state)
+        ui.refresh_stage_backdrop()
+        low = bg.texture
+        self.assertEqual(low.get_width(), 192)
+        bg.set_texture(low, animate=False)
+        self.assertTrue(bg.get_mapped())
+
+        state['Art'] = {'Epoch': 1, 'StageUpgrade': {'ID': 's:one', 'PNG': png_fixture(640)}}
+        with patch.object(d.Adw.TimedAnimation, 'play'), patch.object(bg, 'queue_draw', wraps=bg.queue_draw) as repaint:
+            ui.art_apply(state)
+            ui.refresh_stage_backdrop()
+        self.assertTrue(repaint.called)
+        self.assertIsNone(bg.outgoing, 'the low-res cover must not wait for a frame-clock tick to disappear')
+        rendered = []
+        bg.paint_pair(d.Gtk.Snapshot.new(), lambda tex: rendered.append(tex.get_width()))
+        self.assertEqual(rendered, [640])
+        ui.open('favorites')
+
     def test_cover_geometry_and_page_scope(self):
         d.Adw.init()
         application = d.Adw.Application(application_id='org.tinglan.TestBackdrop', flags=d.Gio.ApplicationFlags.NON_UNIQUE)
@@ -133,16 +170,18 @@ class StageBackdropTest(unittest.TestCase):
             self.assertGreaterEqual(rect[0] + rect[2], 1000)
             self.assertGreaterEqual(rect[1] + rect[3], 600)
             old = ui.stage_backdrop.texture
-            face = ui.stage_cover.get_visible_child().get_last_child()
-            self.assertIs(face.transition, ui.stage_backdrop)
+            cover = ui.stage_cover.get_visible_child()
+            self.assertIsInstance(cover, d.Gtk.Image)
+            self.assertEqual(cover.get_size_request(), (296, 296))
             with patch.object(ui, 'stage_background_texture', return_value=None):
                 ui.refresh_stage_backdrop()
                 self.assertIs(ui.stage_backdrop.texture, old)
             ui.current = 1
             ui.lyrics()
             self.assertIsNot(ui.stage_backdrop.texture, old)
-            self.assertIs(ui.stage_cover.get_visible_child().get_last_child().transition,
-                          ui.stage_backdrop)
+            next_cover = ui.stage_cover.get_visible_child()
+            self.assertIsInstance(next_cover, d.Gtk.Image)
+            self.assertIsNot(next_cover.get_paintable(), cover.get_paintable())
             # Rapidly skip to a track with no image, and keep polling it.
             outgoing = ui.stage_backdrop.texture
             with patch.object(ui, 'stage_background_texture', return_value=None):
@@ -161,7 +200,8 @@ class StageBackdropTest(unittest.TestCase):
                     d.GLib.source_remove(poll)
                 self.assertIsNone(ui.stage_backdrop.texture)
                 self.assertIsNone(ui.stage_backdrop.outgoing)
-                self.assertFalse(ui.stage_backdrop.get_visible())
+                self.assertTrue(ui.stage_backdrop.get_visible(), 'missing art must keep the dark backdrop')
+                self.assertTrue(ui.stage_surface.has_css_class('stage-glass'))
             ui.refresh_stage_backdrop()
             self.assertIs(ui.stage_backdrop.texture, ui.stage_background_texture())
             ui.open('favorites')

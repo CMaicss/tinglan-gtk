@@ -423,7 +423,7 @@ def Live(app, args, preview):
             wire = state.get("Art") or {}
             epoch = (wire.get("Epoch"), wire.get("CacheRevision", 0))
             if epoch != self._art_epoch:
-                self.set_stage_texture(None)
+                self.set_stage_texture(None, animate=False)
             self.art_apply(state)
             self.refresh_stage_backdrop()
             if self.view == 'lyrics':
