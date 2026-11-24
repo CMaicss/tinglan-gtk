@@ -48,6 +48,9 @@ CSS = b'''
 .cover-button { padding: 0; }
 .player { background: @view_bg_color; }
 .stage-glass, .stage-glass headerbar, .stage-glass .player { background: transparent; box-shadow: none; }
+.stage-glass .queue-split > .sidebar-pane,
+.stage-glass .queue-split > .overlay-pane,
+.stage-glass .queue-panel { background: transparent; box-shadow: none; }
 .stage-glass .stage-foreground { color: #fff; }
 .stage-glass .stage-foreground headerbar button.flat, .stage-glass .player button.flat { color: #fff; }
 .stage-glass .player scale trough { background: rgba(255,255,255,.25); }
@@ -336,6 +339,7 @@ class Preview:
         self.queue_split = Adw.OverlaySplitView(content=self.screen, sidebar_position=Gtk.PackType.END,
                                                 min_sidebar_width=267, max_sidebar_width=300, sidebar_width_fraction=.25,
                                                 show_sidebar=False)
+        self.queue_split.add_css_class('queue-split')
         self.queue_split.set_vexpand(True)
         self.main_pane.append(self.queue_split)
         self.stage_backdrop = StageBackdrop()
@@ -888,11 +892,12 @@ class Preview:
         d.present(self.win)
 
     def queue_view(self):
-        panel = Adw.ToolbarView()
+        panel = Adw.ToolbarView(css_classes=['queue-panel'])
         head = Adw.HeaderBar(show_start_title_buttons=False, show_end_title_buttons=False)
         head.set_title_widget(Adw.WindowTitle(title='播放队列'))
         head.pack_start(button('清空队列', 'edit-clear-all-symbolic', lambda: self.dialog('清空队列', [], '清空', cb=self.clear_queue), 'flat'))
-        head.pack_end(button('关闭队列', 'window-close-symbolic', self.toggle_queue, 'flat'))
+        self.queue_collapse = button('收起播放队列', 'go-next-symbolic', lambda: self.queue_split.set_show_sidebar(False), 'flat')
+        head.pack_end(self.queue_collapse)
         panel.add_top_bar(head)
         self.queue_list = Gtk.ListBox(selection_mode=Gtk.SelectionMode.NONE, css_classes=['track-list'])
         self.queue_list.connect('row-activated', lambda _, row: self.activate_queue_row(row))
@@ -917,9 +922,31 @@ class Preview:
             names.append(label(TRACKS[n][0], 'row-title'))
             names.append(label(TRACKS[n][1], 'dim-label'))
             line.append(names)
-            line.append(button('移出队列', 'list-remove-symbolic', lambda x=i: self.remove_queue(x), 'flat'))
+            remove = button('移出队列', 'list-remove-symbolic', lambda x=i: self.remove_queue(x), 'flat')
+            self.queue_remove_on_hover(row, remove)
+            line.append(remove)
             row.set_child(line)
             self.queue_list.append(row)
+
+    def queue_remove_on_hover(self, row, button):
+        hovered = False
+
+        def update(*_):
+            button.set_opacity(1 if hovered or button.has_focus() else 0)
+            button.set_can_target(hovered)
+
+        def hover(active):
+            nonlocal hovered
+            hovered = active
+            update()
+
+        motion = Gtk.EventControllerMotion()
+        motion.connect('enter', lambda *_: hover(True))
+        motion.connect('leave', lambda *_: hover(False))
+        row.add_controller(motion)
+        row.connect('unmap', lambda *_: hover(False))
+        button.connect('notify::has-focus', update)
+        update()
 
     def quality_entries(self):
         return [('标准', None), ('无损', None)]

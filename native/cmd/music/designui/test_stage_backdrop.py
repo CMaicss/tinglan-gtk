@@ -180,6 +180,37 @@ class StageBackdropTest(unittest.TestCase):
         self.assertEqual(manager.get_color_scheme(), d.Adw.ColorScheme.FORCE_LIGHT)
         self.assertFalse(manager.get_dark())
 
+    def test_queue_has_collapse_arrow_and_hover_only_remove(self):
+        d.Adw.init()
+        application = d.Adw.Application(application_id='org.tinglan.TestQueueChrome', flags=d.Gio.ApplicationFlags.NON_UNIQUE)
+        application.register(None)
+        args = SimpleNamespace(width=1140, height=760, page='favorites', queue=False, smoke=False, light=False, dark=False)
+        with patch.object(d, 'TRACKS', [('歌曲', '歌手', '专辑', '1:00')] * 6):
+            ui = d.Preview(application, args)
+            self.addCleanup(ui.win.destroy)
+            ui.lyrics()
+            ui.queue_split.set_show_sidebar(True)
+            row = ui.queue_list.get_first_child().get_child()
+            remove = row.get_last_child()
+            self.assertEqual(remove.get_tooltip_text(), '移出队列')
+            self.assertEqual(remove.get_opacity(), 0)
+            self.assertFalse(remove.get_can_target())
+            controllers = ui.queue_list.get_first_child().observe_controllers()
+            motion = next(c for c in controllers if isinstance(c, d.Gtk.EventControllerMotion))
+            motion.emit('enter', 5.0, 5.0)
+            self.assertEqual(remove.get_opacity(), 1)
+            self.assertTrue(remove.get_can_target())
+            motion.emit('leave')
+            self.assertEqual(remove.get_opacity(), 0)
+            with patch.object(ui, 'remove_queue') as remove_track:
+                motion.emit('enter', 5.0, 5.0)
+                remove.emit('clicked')
+                remove_track.assert_called_once_with(0)
+            self.assertEqual(ui.queue_collapse.get_icon_name(), 'go-next-symbolic')
+            self.assertEqual(ui.queue_collapse.get_tooltip_text(), '收起播放队列')
+            ui.queue_collapse.emit('clicked')
+            self.assertFalse(ui.queue_split.get_show_sidebar())
+
     def test_cover_geometry_and_page_scope(self):
         d.Adw.init()
         application = d.Adw.Application(application_id='org.tinglan.TestBackdrop', flags=d.Gio.ApplicationFlags.NON_UNIQUE)
