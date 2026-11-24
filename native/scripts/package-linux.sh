@@ -51,7 +51,8 @@ Depends: libc6, libasound2t64 | libasound2, python3, python3-gi, gir1.2-gtk-4.0,
 Description: Unofficial GTK desktop music player
  Linux player using independently installed music-source plugins.
 EOF
-deb="tinglan_${version}-1_amd64.deb"
+# Keep the package revision in metadata, not in the download filename.
+deb="tinglan_${version}_amd64.deb"
 dpkg-deb --root-owner-group --build "$stage/deb" "$stage/$deb"
 
 mkdir -p "$stage/rpm"
@@ -77,8 +78,8 @@ cp -a "$app/usr" "%{buildroot}/"
 /usr/share/doc/tinglan/
 EOF
 rpmbuild -bb --define "_topdir $stage/rpm" "$stage/tinglan.spec"
-rpm="tinglan-${version}-1.x86_64.rpm"
-cp "$stage/rpm/RPMS/x86_64/$rpm" "$stage/$rpm"
+rpm="tinglan-${version}.x86_64.rpm"
+cp "$stage/rpm/RPMS/x86_64/tinglan-${version}-1.x86_64.rpm" "$stage/$rpm"
 
 ln -s "usr/share/applications/$icon.desktop" "$app/$icon.desktop"
 ln -s "usr/share/icons/hicolor/512x512/apps/$icon.png" "$app/$icon.png"

@@ -118,7 +118,7 @@ jobs:
           (cd packages && sha256sum --check SHA256SUMS)
           (cd plugins && sha256sum --check SHA256SUMS)
           mkdir release-assets
-          cp "packages/tinglan_${VERSION}-1_amd64.deb" "packages/tinglan-${VERSION}-1.x86_64.rpm" \
+          cp "packages/tinglan_${VERSION}_amd64.deb" "packages/tinglan-${VERSION}.x86_64.rpm" \
             "packages/tinglan-${VERSION}-x86_64.AppImage" plugins/*.zip release-assets/
           (cd release-assets && sha256sum -- *.deb *.rpm *.AppImage *.zip > SHA256SUMS)
           gh release create "v${VERSION}" release-assets/* \
