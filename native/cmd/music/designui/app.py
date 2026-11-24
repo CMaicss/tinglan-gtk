@@ -251,6 +251,7 @@ class StageCoverFace(Gtk.Widget):
 class Preview:
     live = False
     art = staticmethod(cover)
+    chrome_idle_ms = 5000
 
     def __init__(self, app, args):
         self.args = args
@@ -266,7 +267,7 @@ class Preview:
         self.sidebar = self.navigation()
         self.nav_split.set_sidebar(self.sidebar)
         self.screen = Gtk.Stack(vexpand=True, transition_type=Gtk.StackTransitionType.CROSSFADE, transition_duration=130)
-        self.header = Adw.HeaderBar(show_start_title_buttons=False)
+        self.header = Adw.HeaderBar(show_start_title_buttons=False, show_end_title_buttons=False)
         self.header.set_title_widget(Gtk.Box())
         self.header.add_css_class('flat')
         self.nav_toggle = button('导航', 'sidebar-show-symbolic', lambda: self.nav_split.set_show_sidebar(not self.nav_split.get_show_sidebar()), 'flat')
@@ -275,13 +276,31 @@ class Preview:
         self.header.pack_start(self.back)
         self.compact_brand, _ = self.brand()
         self.header.pack_start(self.compact_brand)
+        window_buttons = box(spacing=4)
+        window_buttons.append(button('最小化', 'window-minimize-symbolic', self.win.minimize, 'flat'))
+        self.window_size_button = Gtk.Button(css_classes=['flat'])
+        self.window_size_button.connect('clicked', self.toggle_window_size)
+        window_buttons.append(self.window_size_button)
+        window_buttons.append(button('关闭', 'window-close-symbolic', self.win.close, 'flat'))
+        self.header.pack_end(window_buttons)
+        self.sync_window_size_button()
+        self.win.connect('notify::maximized', self.sync_window_size_button)
+        self.win.connect('notify::fullscreened', self.sync_window_mode)
+        self.fullscreen_drag = Gtk.GestureDrag(button=Gdk.BUTTON_PRIMARY)
+        self.fullscreen_drag.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
+        self.fullscreen_drag.connect('drag-begin', self.begin_fullscreen_drag)
+        self.fullscreen_drag.connect('drag-update', self.update_fullscreen_drag)
+        self.header.add_controller(self.fullscreen_drag)
         self.primary_menu = self.application_menu()
         self.header.pack_end(self.primary_menu)
         self.lyric_options = menu('歌词选项', [('导入歌词', lambda: self.dialog('导入歌词', [], '导入', field='歌词文件')),
             ('歌词提前半秒', None), ('歌词延后半秒', None)])
         self.header.pack_end(self.lyric_options)
         self.main_pane = box(True)
-        self.main_pane.append(self.header)
+        self.header_revealer = Gtk.Revealer(child=self.header, reveal_child=True,
+                                           transition_type=Gtk.RevealerTransitionType.SLIDE_DOWN,
+                                           transition_duration=240)
+        self.main_pane.append(self.header_revealer)
         self.root.append(self.nav_split)
         self.queue_split = Adw.OverlaySplitView(content=self.screen, sidebar_position=Gtk.PackType.END,
                                                 min_sidebar_width=267, max_sidebar_width=300, sidebar_width_fraction=.25,
@@ -306,8 +325,29 @@ class Preview:
         self.screen.add_named(history[0], 'history')
         self.history_area = history[1]
         self.screen.add_named(self.settings(), 'settings')
-        self.main_pane.append(Gtk.Separator())
-        self.main_pane.append(self.player())
+        player_bar = box(True)
+        player_bar.append(Gtk.Separator())
+        player_bar.append(self.player())
+        self.player_revealer = Gtk.Revealer(child=player_bar, reveal_child=True,
+                                           transition_type=Gtk.RevealerTransitionType.SLIDE_UP,
+                                           transition_duration=240)
+        self.main_pane.append(self.player_revealer)
+        self._chrome_idle_source = 0
+        self.chrome_motion = Gtk.EventControllerMotion()
+        self.chrome_motion.connect('motion', self.stage_chrome_activity)
+        self.chrome_motion.connect('enter', self.stage_chrome_activity)
+        clicks = Gtk.GestureClick(button=0)
+        clicks.connect('pressed', self.stage_chrome_activity)
+        clicks.connect('released', self.stage_chrome_activity)
+        wheel = Gtk.EventControllerScroll(flags=Gtk.EventControllerScrollFlags.BOTH_AXES)
+        wheel.connect('scroll', self.stage_chrome_activity)
+        keys = Gtk.EventControllerKey()
+        keys.connect('key-pressed', self.stage_chrome_activity)
+        for controller in (self.chrome_motion, clicks, wheel, keys):
+            controller.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
+            self.win.add_controller(controller)
+        self.win.connect('map', self.stage_chrome_activity)
+        self.win.connect('unmap', self.cancel_stage_chrome_idle)
         self.narrow(1110, (self.queue_split, 'collapsed', True))
         self.narrow(720, (self.queue_split, 'collapsed', True),
                     (self.nav_split, 'collapsed', True), (self.nav_split, 'show-sidebar', False),
@@ -345,6 +385,7 @@ class Preview:
         sidebar = box(True)
         sidebar.add_css_class('tinglan-sidebar')
         brand, self.brand_icon = self.brand()
+        self.sidebar_brand = brand
         brand.set_margin_start(26)
         brand.set_size_request(-1, 46)
         sidebar.append(brand)
@@ -362,6 +403,50 @@ class Preview:
         self.sidebar_track = margin(box(), 20, 20)
         sidebar.append(self.sidebar_track)
         return sidebar
+
+    def sync_window_size_button(self, *_):
+        restore = self.win.is_fullscreen() or self.win.is_maximized()
+        self.window_size_button.set_icon_name('window-restore-symbolic' if restore else 'window-maximize-symbolic')
+        name = '还原窗口' if restore else '最大化'
+        self.window_size_button.set_tooltip_text(name)
+        self.window_size_button.update_property([Gtk.AccessibleProperty.LABEL], [name])
+
+    def sync_window_mode(self, *_):
+        self.sync_window_size_button()
+        self.layout_identity()
+        self.cancel_stage_chrome_idle()
+        self.set_stage_chrome_visible(True)
+        self.stage_chrome_activity()
+
+    def restore_normal_window(self):
+        if self.win.is_fullscreen():
+            self.win.unfullscreen()
+        if self.win.is_maximized():
+            self.win.unmaximize()
+
+    def toggle_window_size(self, *_):
+        if self.win.is_fullscreen() or self.win.is_maximized():
+            self.restore_normal_window()
+        else:
+            self.win.maximize()
+
+    def begin_fullscreen_drag(self, gesture, x, y):
+        if self.win.is_fullscreen():
+            target = self.header.pick(x, y, Gtk.PickFlags.DEFAULT)
+            while target is not None and target is not self.header:
+                if isinstance(target, (Gtk.Button, Gtk.MenuButton)):
+                    break
+                target = target.get_parent()
+            if target is self.header or target is None:
+                return
+        gesture.set_state(Gtk.EventSequenceState.DENIED)
+
+    def update_fullscreen_drag(self, gesture, dx, dy):
+        if not self.win.is_fullscreen():
+            return
+        threshold = self.header.get_settings().get_property('gtk-dnd-drag-threshold')
+        if max(abs(dx), abs(dy)) >= threshold and gesture.set_state(Gtk.EventSequenceState.CLAIMED):
+            self.restore_normal_window()
 
     def application_menu(self):
         model = Gio.Menu()
@@ -415,7 +500,12 @@ class Preview:
     def open(self, key):
         if key == 'queue':
             key = 'favorites'
+        previous = getattr(self, 'view', None)
         self.view = key
+        if key != previous:
+            self.cancel_stage_chrome_idle()
+            self.set_stage_chrome_visible(True)
+            self.stage_chrome_activity()
         self.lyric_options.set_visible(key == 'lyrics')
         self.nav_split.set_show_sidebar(key != 'lyrics' and not self.nav_split.get_collapsed())
         self.screen.set_visible_child_name(key)
@@ -432,6 +522,28 @@ class Preview:
             self.nav_split.set_show_sidebar(False)
         self.layout_identity()
         self.refresh_stage_backdrop()
+
+    def cancel_stage_chrome_idle(self, *_):
+        if self._chrome_idle_source:
+            GLib.source_remove(self._chrome_idle_source)
+            self._chrome_idle_source = 0
+
+    def set_stage_chrome_visible(self, visible):
+        self.header_revealer.set_reveal_child(visible)
+        self.player_revealer.set_reveal_child(visible)
+
+    def stage_chrome_activity(self, *_):
+        if (self.view == 'lyrics' or self.win.is_fullscreen()) and self.win.get_mapped():
+            self.cancel_stage_chrome_idle()
+            self.set_stage_chrome_visible(True)
+            self._chrome_idle_source = GLib.timeout_add(self.chrome_idle_ms, self.hide_idle_stage_chrome)
+        return False  # Observe input without consuming it.
+
+    def hide_idle_stage_chrome(self):
+        self._chrome_idle_source = 0
+        if self.view == 'lyrics' or self.win.is_fullscreen():
+            self.set_stage_chrome_visible(False)
+        return GLib.SOURCE_REMOVE
 
     def refresh_stage_backdrop(self):
         if self.view != 'lyrics' or self.current is None:
@@ -826,7 +938,9 @@ class Preview:
         compact = self.nav_split.get_collapsed()
         lyrics = self.view == 'lyrics'
         in_sidebar = not compact and not lyrics
-        self.compact_brand.set_visible(not in_sidebar)
+        show_brand = not lyrics and not self.win.is_fullscreen()
+        self.compact_brand.set_visible(compact and show_brand)
+        self.sidebar_brand.set_visible(show_brand)
         start = (None if lyrics else self.identity) if compact else self.tools
         if self.player_layout.get_start_widget() is not start:
             self.player_layout.set_start_widget(None)
@@ -930,7 +1044,8 @@ class Preview:
             self.lyrics()
 
     def lyric_lines(self):
-        return ('风翻过空白的信纸', '船灯从远处慢慢靠近', '等潮汐把你的名字带回来', '让沉默也有了回声', '我在岸边 等下一封信')
+        return [('风翻过空白的信纸',), ('船灯从远处慢慢靠近',), ('等潮汐把你的名字带回来',),
+                ('让沉默也有了回声',), ('我在岸边 等下一封信',)]
 
     def lyric_current(self):
         return 2
@@ -979,8 +1094,17 @@ class Preview:
         text.set_valign(Gtk.Align.CENTER)
         self.stage_lines = []
         active = self.lyric_current()
-        for i, line in enumerate(self.lyric_lines()):
+        for i, (original, *subtitles) in enumerate(self.lyric_lines()):
+            line = '\n'.join((original, *subtitles))
             item = label(line, 'lyric')
+            if subtitles:
+                attrs = Pango.AttrList.new()
+                scale = Pango.attr_scale_new(.74)
+                # Pango ranges count UTF-8 bytes, not Python characters.
+                scale.start_index = len(original.encode('utf-8')) + 1
+                scale.end_index = len(line.encode('utf-8'))
+                attrs.insert(scale)
+                item.set_attributes(attrs)
             item.add_css_class('active' if i == active else 'dim-label')
             item.set_wrap(True)
             item.set_ellipsize(Pango.EllipsizeMode.NONE)
@@ -989,6 +1113,7 @@ class Preview:
         self.stage_text = text
         if self.live:
             self.stage_scroll = scroll(text)
+            self.stage_scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.EXTERNAL)
             spread.set_valign(Gtk.Align.FILL)
             spread.append(self.stage_scroll)
         else:

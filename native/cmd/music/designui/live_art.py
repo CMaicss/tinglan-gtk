@@ -330,11 +330,11 @@ def art_mixin(d):
                 row = -1
                 if text:
                     row = len(labels)
-                    labels.append('\n'.join(filter(None, (text, line.get('translation'), line.get('romanization')))))
+                    labels.append(tuple(filter(None, (text, line.get('translation'), line.get('romanization')))))
                 if line.get('time', -1) >= 0:
                     cues.append((line['time'], row))
             empty = '正在加载歌词…' if phase in ('cache', 'idle', 'online') else '暂无歌词'
-            self._art_labels = labels or [empty]
+            self._art_labels = labels or [(empty,)]
             self._art_cues = sorted(cues, key=lambda cue: cue[0])
 
         def art_follow_lyric(self, active):

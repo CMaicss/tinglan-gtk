@@ -1,6 +1,12 @@
 import base64
+import io
 import unittest
+from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
+
+import app as d
+from live import Live
 
 from live_art import art_mixin
 
@@ -23,6 +29,35 @@ def flush():
 
 
 class DesignArtDeliveryTest(unittest.TestCase):
+    def test_stage_lyric_subtitles_are_smaller_than_original(self):
+        d.Adw.init()
+        application = d.Adw.Application(application_id='org.tinglan.TestLyricStyle', flags=d.Gio.ApplicationFlags.NON_UNIQUE)
+        application.register(None)
+        args = SimpleNamespace(backend=Path('/unused'), width=1140, height=760,
+                               page='favorites', queue=False, smoke=False, light=False, dark=False)
+        backend = SimpleNamespace(stdin=io.StringIO())
+        with patch('live.subprocess.Popen', return_value=backend), patch('live.threading.Thread'):
+            ui = Live(application, args, d.Preview)
+        self.addCleanup(ui.quit_window)
+        with patch.object(d, 'TRACKS', [('歌曲', '歌手', '专辑', '1:00')]):
+            ui.current = 0
+            ui.state = {'Position': 1, 'Lyrics': [{'time': 1, 'text': '原文 & <歌>',
+                        'translation': '译文', 'romanization': 'yuen'}, {'time': 2, 'text': '纯正文'}]}
+            ui.lyrics()
+        self.assertEqual(ui.stage_scroll.get_policy().vscrollbar_policy, Gtk.PolicyType.EXTERNAL)
+        row, plain = ui.stage_lines
+        original = '原文 & <歌>\n'
+        self.assertEqual(row.get_text(), original + '译文\nyuen')
+        self.assertTrue(row.has_css_class('active'))
+        attrs = row.get_attributes()
+        self.assertIsNotNone(attrs, 'subtitles should have their own font scale')
+        scales = [a for a in attrs.get_attributes() if a.klass.type == d.Pango.AttrType.SCALE]
+        self.assertEqual(len(scales), 1)
+        self.assertEqual(scales[0].start_index, len(original.encode('utf-8')))
+        self.assertEqual(scales[0].end_index, len(row.get_text().encode('utf-8')))
+        self.assertLess(scales[0].as_float().value, 1)
+        self.assertIsNone(plain.get_attributes())
+
     def make_ui(self):
         design = SimpleNamespace(Gtk=Gtk, icon=lambda name, size: Gtk.Image.new_from_icon_name(name))
         ui = art_mixin(design)()
@@ -189,7 +224,7 @@ class DesignArtDeliveryTest(unittest.TestCase):
                    {'time': 2, 'text': ''}, {'time': 3, 'text': 'two', 'translation': '二'}],
                    'Art': {'Epoch': 1, 'LyricToken': 'current'}}
         ui.art_apply(ui.state)
-        self.assertEqual(ui.art_lyric_lines(), ['one', 'two\n二'])
+        self.assertEqual(ui.art_lyric_lines(), [('one',), ('two', '二')])
         self.assertEqual(ui.art_lyric_current(), -1)
         ui._art_offset(1)
         self.assertEqual(sent, [('lyric-offset', {'ID': 'current', 'Index': 1})])

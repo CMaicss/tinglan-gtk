@@ -10,6 +10,73 @@ from test_live_art_delivery import png_fixture
 
 
 class StageBackdropTest(unittest.TestCase):
+    def test_titlebar_button_keeps_maximize_separate_from_fullscreen(self):
+        d.Adw.init()
+        application = d.Adw.Application(application_id='org.tinglan.TestWindowModes', flags=d.Gio.ApplicationFlags.NON_UNIQUE)
+        application.register(None)
+        args = SimpleNamespace(width=960, height=640, page='favorites', queue=False, smoke=False, light=False, dark=False)
+        with patch.object(d, 'TRACKS', [('歌曲', '歌手', '专辑', '1:00')] * 6):
+            ui = d.Preview(application, args)
+            self.addCleanup(ui.win.destroy)
+        self.assertEqual(ui.window_size_button.get_icon_name(), 'window-maximize-symbolic')
+        for fullscreen, maximized, calls in (
+                (False, False, ['maximize']), (False, True, ['unmaximize']),
+                (True, False, ['unfullscreen']), (True, True, ['unfullscreen', 'unmaximize'])):
+            actions = []
+            fake = SimpleNamespace(is_fullscreen=lambda: fullscreen, is_maximized=lambda: maximized)
+            for action in ('maximize', 'unmaximize', 'unfullscreen'):
+                setattr(fake, action, lambda name=action: actions.append(name))
+            with patch.object(ui, 'win', fake):
+                ui.sync_window_size_button()
+                expected = 'window-restore-symbolic' if fullscreen or maximized else 'window-maximize-symbolic'
+                self.assertEqual(ui.window_size_button.get_icon_name(), expected)
+                ui.window_size_button.emit('clicked')
+                self.assertEqual(actions, calls)
+
+    def test_playback_chrome_hides_after_idle_and_returns_on_motion(self):
+        d.Adw.init()
+        application = d.Adw.Application(application_id='org.tinglan.TestStageChrome', flags=d.Gio.ApplicationFlags.NON_UNIQUE)
+        application.register(None)
+        args = SimpleNamespace(width=640, height=760, page='favorites', queue=False, smoke=False, light=False, dark=False)
+        with patch.object(d, 'TRACKS', [('歌曲', '歌手', '专辑', '1:00')] * 6):
+            ui = d.Preview(application, args)
+            self.addCleanup(ui.win.destroy)
+            ui.chrome_idle_ms = 80
+            settings = ui.win.get_settings()
+            animations = settings.get_property('gtk-enable-animations')
+            self.addCleanup(settings.set_property, 'gtk-enable-animations', animations)
+            # This state test also runs alongside windows that may throttle frame delivery.
+            settings.set_property('gtk-enable-animations', False)
+            ui.win.present()
+            ui.lyrics()
+            self.assertFalse(ui.compact_brand.get_visible())
+            self.assertTrue(ui.header_revealer.get_reveal_child())
+            loop = d.GLib.MainLoop()
+            def finish():
+                loop.quit()
+                return False
+            deadline = d.GLib.get_monotonic_time() + 2_000_000
+            def wait_for_hidden():
+                hidden = (not ui.header_revealer.get_reveal_child()
+                          and ui.header_revealer.get_height() == ui.player_revealer.get_height() == 0)
+                return finish() if hidden or d.GLib.get_monotonic_time() >= deadline else True
+            d.GLib.timeout_add(16, wait_for_hidden)
+            loop.run()
+            self.assertFalse(ui.header_revealer.get_child_revealed())
+            self.assertFalse(ui.player_revealer.get_child_revealed())
+            self.assertEqual(ui.header_revealer.get_height(), 0)
+            self.assertEqual(ui.player_revealer.get_height(), 0)
+            ui.chrome_motion.emit('motion', 200.0, 300.0)
+            self.assertTrue(ui.header_revealer.get_reveal_child())
+            self.assertTrue(ui.player_revealer.get_reveal_child())
+            self.assertFalse(ui.compact_brand.get_visible())
+            ui.open('favorites')
+            self.assertTrue(ui.compact_brand.get_visible())
+            d.GLib.timeout_add(120, finish)
+            loop.run()
+            self.assertTrue(ui.header_revealer.get_reveal_child())
+            self.assertTrue(ui.player_revealer.get_reveal_child())
+
     def test_live_stage_ignores_late_reply_after_rapid_skip(self):
         d.Adw.init()
         application = d.Adw.Application(application_id='org.tinglan.TestLateArt', flags=d.Gio.ApplicationFlags.NON_UNIQUE)
@@ -57,8 +124,8 @@ class StageBackdropTest(unittest.TestCase):
             self.assertIsNotNone(ui.stage_backdrop.texture)
             overlay = ui.stage_backdrop.get_parent()
             self.assertIs(overlay.get_child(), ui.main_pane)
-            self.assertIs(ui.header.get_parent(), ui.main_pane)
-            self.assertIs(ui.player_inner.get_parent().get_parent(), ui.main_pane)
+            self.assertTrue(ui.header.is_ancestor(ui.main_pane))
+            self.assertTrue(ui.player_inner.is_ancestor(ui.main_pane))
             rect = ui.stage_backdrop.cover_rect(1000, 600, 400, 200)
             self.assertAlmostEqual(rect[2] / rect[3], 2)
             self.assertLessEqual(rect[0], 0)
