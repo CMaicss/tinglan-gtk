@@ -48,7 +48,7 @@ class TestLiveCollectionsGTK(unittest.TestCase):
             raise unittest.SkipTest('GTK display and libadwaita AlertDialog required')
         cls.preview = preview
 
-    def test_title_and_artist_buttons_dispatch_distinct_actions(self):
+    def test_track_labels_align_with_larger_cover_and_preserve_row_actions(self):
         d = self.preview
 
         class Base(d.Preview):
@@ -65,6 +65,9 @@ class TestLiveCollectionsGTK(unittest.TestCase):
             def send(self, op, **data):
                 self.commands.append((op, data))
 
+            def play_from_list(self, n, append=False):
+                self.commands.append(('row-play', (n, append)))
+
         class Frontend(collections_mixin(d), Base):
             pass
 
@@ -78,11 +81,42 @@ class TestLiveCollectionsGTK(unittest.TestCase):
         row = listing.get_first_child()
         names = row.get_child().get_first_child().get_next_sibling()
         self.assertIs(names.get_next_sibling(), row.collection_star[1])
-        names.get_first_child().emit('clicked')
-        names.get_last_child().emit('clicked')
+        title = names.get_first_child()
+        self.assertIsInstance(title, d.Gtk.Label)
+        self.assertEqual(title.get_text(), 'Song')
+        self.assertFalse(title.get_selectable())
+        self.assertEqual(ui.commands, [])
+        artist = names.get_last_child()
+        self.assertIsInstance(artist, d.Gtk.Label)
+        self.assertEqual(artist.get_text(), 'Artist')
+        self.assertFalse(artist.get_selectable())
+
+        window = d.Gtk.Window(default_width=420, child=ui.search_results)
+        self.addCleanup(window.destroy)
+        window.present()
+        loop = d.GLib.MainLoop()
+        d.GLib.timeout_add(100, lambda: (loop.quit(), d.GLib.SOURCE_REMOVE)[1])
+        loop.run()
+        line = row.get_child()
+        cover = line.get_first_child()
+        self.assertEqual((cover.get_width(), cover.get_height()), (48, 48))
+        positions = []
+        for widget in (cover, title, artist):
+            ok, bounds = widget.compute_bounds(line)
+            self.assertTrue(ok)
+            positions.append(bounds.get_x())
+        self.assertEqual(positions[1], positions[2])
+        self.assertEqual(positions[1] - positions[0] - cover.get_width(), 14)
+
+        listing.emit('row-activated', row)
+        menu = line.get_last_child().get_popover().get_child()
+        self.assertEqual(menu.get_first_child().get_label(), '专辑 · Album')
+        artist_action = menu.get_first_child().get_next_sibling()
+        self.assertEqual(artist_action.get_label(), '艺人 · Artist')
+        artist_action.emit('clicked')
         row.collection_star[1].emit('clicked')
         self.assertEqual(ui.commands, [
-            ('collection-title-Results', dict(ID='provider:song', Index=0, Text='')),
+            ('row-play', (0, True)),
             ('collection-artist-Results', dict(ID='provider:song', Index=0, Text='Artist')),
             ('collection-favorite-Results', dict(ID='provider:song', Index=0, Text='')),
         ])

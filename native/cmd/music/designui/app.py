@@ -646,8 +646,8 @@ class Preview:
             title, artist, album, _ = TRACKS[n]
             row = Gtk.ListBoxRow()
             row.track = n
-            line = margin(box(spacing=10), 8, 6)
-            line.append(self.art(n, 40))
+            line = margin(box(spacing=14), 8, 6)
+            line.append(self.art(n, 48))
             names = box(True, 1)
             names.set_valign(Gtk.Align.CENTER)
             names.set_hexpand(True)

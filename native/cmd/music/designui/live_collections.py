@@ -117,22 +117,15 @@ def collections_mixin(d):
                 track = data[index]
                 key = track['ID']
 
-                def run(action, text='', *, i=index, track_id=key, f=field):
+                def run(action, text='', *, i=index, track_id=key, f=field) -> None:
                     self.collection_track_action(action, f, i, track_id, text)
 
                 line = row.get_child()
-                entries = [('曲目详情', lambda cb=run: cb('title'))]
-                if field != 'Detail' or detail.get('Kind') != 'track':
-                    title = line.get_first_child().get_next_sibling().get_first_child()
-                    self.collection_link(title, lambda cb=run: cb('title'))
+                entries = []
                 if track.get('Album'):
                     entries.append(('专辑 · ' + track['Album'], lambda cb=run: cb('album')))
                 artists = [name for name in track.get('Artist', '').split(' / ') if name and name != '未知艺人']
-                if artists:
-                    names = line.get_first_child().get_next_sibling()
-                    if len(artists) == 1:
-                        self.collection_link(names.get_last_child(), lambda cb=run, name=artists[0]: cb('artist', name))
-                    entries.extend(('艺人 · ' + name, lambda cb=run, artist=name: cb('artist', artist)) for name in artists)
+                entries.extend(('艺人 · ' + name, lambda cb=run, artist=name: cb('artist', artist)) for name in artists)
                 if self.collection_state().get('CanEdit'):
                     star = d.button('切换本地收藏', 'non-starred-symbolic', lambda cb=run: cb('favorite'), 'flat')
                     star.set_valign(d.Gtk.Align.CENTER)
@@ -141,9 +134,10 @@ def collections_mixin(d):
                     entries.append(('添加到歌单', lambda cb=run, title=track['Title']: self.collection_pick_playlist(cb, title)))
                     if field == 'Detail' and detail.get('Kind') == 'local':
                         entries.append(('从歌单移除', lambda cb=run, pl=detail['ID']: cb('remove', pl)))
-                more = d.menu('曲目操作', entries)
-                more.set_valign(d.Gtk.Align.CENTER)
-                line.append(more)
+                if entries:
+                    more = d.menu('曲目操作', entries)
+                    more.set_valign(d.Gtk.Align.CENTER)
+                    line.append(more)
                 row = row.get_next_sibling()
                 index += 1
             return listing
@@ -154,17 +148,6 @@ def collections_mixin(d):
                 if parent is getattr(self, attr, None):
                     return field
             return None
-
-        def collection_link(self, label, action):
-            # Replace only the label, keeping the approved title/artist layout.
-            parent = label.get_parent()
-            previous = label.get_prev_sibling()
-            parent.remove(label)
-            link = d.Gtk.Button(child=label, halign=d.Gtk.Align.START, css_classes=['flat', 'collection-link'])
-            link.set_has_frame(False)
-            link.set_cursor_from_name('pointer')
-            link.connect('clicked', lambda *_: action())
-            parent.insert_child_after(link, previous)
 
         def collection_render_detail(self, detail):
             if self.view != 'detail':
